@@ -111,6 +111,61 @@ def test_g1_waist_variants() -> None:
     unitree_g1_homie_env_cfg(waist="unknown")
 
 
+def test_g1_policy_waist_variant() -> None:
+  from mjlab_homierl import mdp
+  from mjlab_homierl.env_cfgs import G1_ARM_JOINTS, G1_WAIST_JOINTS
+
+  base = unitree_g1_homie_env_cfg(gains="mjlab")
+  v2 = unitree_g1_homie_env_cfg(gains="mjlab", waist="policy")
+  actions = v2.actions["joint_pos"].actuator_names
+  assert actions == base.actions["joint_pos"].actuator_names + G1_WAIST_JOINTS
+  assert len(actions) == 15
+  assert set(v2.actions["joint_pos"].scale) >= set(G1_WAIST_JOINTS)
+  # Only the arms are disturbed.
+  assert v2.actions["upper_body_pose"].joint_names == G1_ARM_JOINTS
+  # One-step obs 83 = 4 commands + 6 + 2 * 29 joints + 15 actions.
+  assert len(v2.observations["actor"].terms["him_obs"].noise.n_max) == 83
+  # Joint-space penalties cover the waist too.
+  assert v2.rewards["torques"].params["asset_cfg"].joint_names == actions
+  for name in ("torques",):
+    assert "waist_yaw_joint" in v2.rewards[name].params["stiffness"]
+  assert "waist_yaw_joint" in v2.rewards["torque_limits"].params["effort_limits"]
+  assert v2.rewards["torso_orientation"].func is mdp.body_orientation_penalty
+  assert v2.rewards["torso_ang_vel_xy"].weight == -0.5
+  assert v2.rewards["deviation_waist_joint"].params["asset_cfg"].joint_names == (
+    G1_WAIST_JOINTS
+  )
+  for name in ("torso_orientation", "torso_ang_vel_xy", "deviation_waist_joint"):
+    assert name not in base.rewards
+  # The deploy-gains variant uses the uniform 0.25 scale for the waist too.
+  assert unitree_g1_homie_env_cfg(waist="policy").actions["joint_pos"].scale == 0.25
+  with pytest.raises(ValueError):
+    unitree_g1_homie_env_cfg(native=True, waist="policy")
+
+
+def test_g1_smooth_variant() -> None:
+  from mjlab_homierl import mdp
+
+  base = unitree_g1_homie_env_cfg(gains="mjlab")
+  smooth = unitree_g1_homie_env_cfg(gains="mjlab", smooth=True)
+  assert base.rewards["action_rate"].func is mdp.action_rate_l2
+  for name, func in (
+    ("action_rate", mdp.action_rate_joint_l2),
+    ("smoothness", mdp.action_smoothness_joint_l2),
+  ):
+    term = smooth.rewards[name]
+    assert term.func is func
+    assert term.weight == base.rewards[name].weight
+    assert term.params == {"action_name": "joint_pos", "reference_scale": 0.25}
+  assert smooth.rewards["ang_vel_xy"].weight == -0.05
+  torso = smooth.rewards["torso_ang_vel_xy"]
+  assert torso.func is mdp.body_ang_vel_xy_penalty
+  assert torso.params["asset_cfg"].body_names == ("torso_link",)
+  assert "torso_ang_vel_xy" not in base.rewards
+  with pytest.raises(ValueError):
+    unitree_g1_homie_env_cfg(native=True, smooth=True)
+
+
 def test_g1_base_task_matches_openhomie_interface() -> None:
   base = unitree_g1_homie_env_cfg()
   # One-step obs 80 = 4 commands + 6 + 2 * 29 joints + 12 actions.

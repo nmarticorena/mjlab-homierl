@@ -8,3 +8,5 @@ def test_registered_task_ids() -> None:
   assert "Mjlab-Homie-Unitree-G1" in tasks
   assert "Mjlab-Homie-Unitree-H1" in tasks
   assert "Mjlab-Homie-Unitree-H1-with_hands" in tasks
+  assert "Mjlab-Homie-Unitree-G1-mjlab_gains_smooth" in tasks
+  assert "Mjlab-Homie-Unitree-G1-v2" in tasks
