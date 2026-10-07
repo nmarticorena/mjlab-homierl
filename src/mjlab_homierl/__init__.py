@@ -8,6 +8,7 @@ from mjlab_homierl.rl import HomieHimOnPolicyRunner
 from mjlab_homierl.rl_cfg import (
   unitree_g1_homie_himppo_runner_cfg,
   unitree_g1_homie_smooth_himppo_runner_cfg,
+  unitree_g1_homie_v2_himppo_runner_cfg,
   unitree_h1_homie_himppo_runner_cfg,
 )
 
@@ -62,6 +63,20 @@ register_mjlab_task(
     play=True, gains="mjlab", waist="free", smooth=True
   ),
   rl_cfg=unitree_g1_homie_smooth_himppo_runner_cfg(),
+  runner_cls=HomieHimOnPolicyRunner,
+)
+
+# HoMIe v2: the policy actuates legs + waist (15 actions, FALCON's lower-body
+# split) and only the arms are randomly disturbed; mjlab gains and the smooth
+# rewards, plus torso tilt / rate and waist deviation penalties. NOT
+# interface-compatible with the 12-action tasks (one-step obs 83, actions 15).
+register_mjlab_task(
+  task_id="Mjlab-Homie-Unitree-G1-v2",
+  env_cfg=unitree_g1_homie_env_cfg(gains="mjlab", waist="policy", smooth=True),
+  play_env_cfg=unitree_g1_homie_env_cfg(
+    play=True, gains="mjlab", waist="policy", smooth=True
+  ),
+  rl_cfg=unitree_g1_homie_v2_himppo_runner_cfg(),
   runner_cls=HomieHimOnPolicyRunner,
 )
 
