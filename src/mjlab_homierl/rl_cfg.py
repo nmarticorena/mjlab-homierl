@@ -88,5 +88,15 @@ def unitree_g1_homie_smooth_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
   return cfg
 
 
+def unitree_g1_homie_v2_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
+  """HoMIe v2 (policy-actuated waist): the smooth runner, own experiment folder.
+
+  v2 checkpoints have 15 actions and cannot be loaded into the 12-action tasks.
+  """
+  cfg = unitree_g1_homie_smooth_himppo_runner_cfg()
+  cfg.experiment_name = "g1_homie_v2_himppo"
+  return cfg
+
+
 def unitree_h1_homie_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
   return homie_himppo_runner_cfg("h1_homie_himppo")

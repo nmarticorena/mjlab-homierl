@@ -174,6 +174,25 @@ def body_ang_vel_xy_penalty(
   return torch.sum(torch.square(ang_vel_b[..., :2]), dim=(1, 2))
 
 
+def body_orientation_penalty(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
+) -> torch.Tensor:
+  """Penalize the tilt of ``asset_cfg.body_names`` (squared projected-gravity xy).
+
+  ``orientation_penalty`` for an arbitrary body, e.g. the torso on top of a
+  policy-actuated waist.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  quat = asset.data.body_link_quat_w[:, asset_cfg.body_ids]
+  gravity_w = torch.tensor((0.0, 0.0, -1.0), device=quat.device).expand(
+    *quat.shape[:-1], 3
+  )
+  gravity_b = quat_apply_inverse(quat.reshape(-1, 4), gravity_w.reshape(-1, 3)).view_as(
+    gravity_w
+  )
+  return torch.sum(torch.square(gravity_b[..., :2]), dim=(1, 2))
+
+
 def orientation_penalty(
   env: ManagerBasedRlEnv,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,

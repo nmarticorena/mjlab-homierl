@@ -147,6 +147,14 @@ G1_UPPER_BODY_JOINTS: tuple[str, ...] = (
 )
 
 G1_ALL_JOINTS: tuple[str, ...] = G1_LOWER_BODY_JOINTS + G1_UPPER_BODY_JOINTS
+G1_WAIST_JOINTS: tuple[str, ...] = (
+  "waist_yaw_joint",
+  "waist_roll_joint",
+  "waist_pitch_joint",
+)
+G1_ARM_JOINTS: tuple[str, ...] = tuple(
+  j for j in G1_UPPER_BODY_JOINTS if j not in G1_WAIST_JOINTS
+)
 
 # Standing pelvis height above the foot sites at the HOME keyframe (measured).
 G1_STANDING_HEIGHT = 0.78
@@ -185,6 +193,24 @@ G1_LOWER_EFFORT_LIMITS = {
   ".*_knee_joint": g1_constants.ACTUATOR_7520_22.effort_limit,
   ".*_ankle_.*_joint": g1_constants.ACTUATOR_5020.effort_limit * 2,
 }
+# Waist entries of the tables above, used when the policy actuates the waist
+# (waist="policy"). Motor types follow mjlab's G1 actuator groups: waist_yaw is
+# a 7520-14, waist_roll/pitch a parallel 5020 pair.
+G1_MJLAB_WAIST_STIFFNESS = {
+  "waist_yaw_joint": g1_constants.STIFFNESS_7520_14,
+  "waist_(roll|pitch)_joint": g1_constants.STIFFNESS_5020 * 2,
+}
+G1_DEPLOY_WAIST_STIFFNESS = {
+  pattern: kp for pattern, (kp, _) in G1_DEPLOY_PD_GAINS.items() if "waist" in pattern
+}
+G1_WAIST_VELOCITY_LIMITS = {
+  "waist_yaw_joint": g1_constants.ACTUATOR_7520_14.velocity_limit,
+  "waist_(roll|pitch)_joint": g1_constants.ACTUATOR_5020.velocity_limit,
+}
+G1_WAIST_EFFORT_LIMITS = {
+  "waist_yaw_joint": g1_constants.ACTUATOR_7520_14.effort_limit,
+  "waist_(roll|pitch)_joint": g1_constants.ACTUATOR_5020.effort_limit * 2,
+}
 
 
 def unitree_g1_homie_env_cfg(
@@ -215,6 +241,11 @@ def unitree_g1_homie_env_cfg(
       - ``"free"``: all three waist joints join the disturbance set — a
         strict superset of the original training distribution (the torso can
         be randomly pitched/rolled).
+      - ``"policy"`` (HoMIe v2): the policy actuates the waist (15 actions:
+        12 legs + waist yaw/roll/pitch, FALCON's lower-body split) and only
+        the 14 arm joints are randomly disturbed. Adds a waist deviation
+        penalty and torso tilt / roll-pitch-rate penalties so the policy holds
+        the torso upright. Not checkpoint-compatible with the other variants.
     gains: PD-gain variant.
       - ``"deploy"`` (default): deployment-grade gains matching HomieDeploy's
         real-robot low-level controller, with the uniform 0.25 action scale
@@ -237,6 +268,12 @@ def unitree_g1_homie_env_cfg(
     raise ValueError(f"Unknown gains variant '{gains}'. Use 'deploy' or 'mjlab'.")
   if native and (hands is not None or waist != "locked" or gains != "deploy" or smooth):
     raise ValueError("native=True pins OpenHomie parity; no other variants allowed.")
+  if waist not in ("locked", "free", "policy"):
+    raise ValueError(
+      f"Unknown waist variant '{waist}'. Use 'locked', 'free' or 'policy'."
+    )
+  # Joints driven by the policy's joint_pos action.
+  policy_joints = G1_LOWER_BODY_JOINTS + (G1_WAIST_JOINTS if waist == "policy" else ())
   cfg = make_homie_env_cfg()
 
   # Robot: mjlab asset-zoo G1 with the standing HOME keyframe as the default
@@ -314,14 +351,14 @@ def unitree_g1_homie_env_cfg(
   # Observations.
   cfg.observations = make_him_observations(
     joint_names=G1_ALL_JOINTS,
-    num_actions=len(G1_LOWER_BODY_JOINTS),
+    num_actions=len(policy_joints),
   )
 
   # Actions.
   step_threshold = 0 if play else curriculum_start_step
   joint_pos = cfg.actions["joint_pos"]
   assert isinstance(joint_pos, JointPositionActionCfg)
-  joint_pos.actuator_names = G1_LOWER_BODY_JOINTS
+  joint_pos.actuator_names = policy_joints
   if gains == "deploy":
     joint_pos.scale = G1_DEPLOY_ACTION_SCALE
   else:
@@ -329,6 +366,7 @@ def unitree_g1_homie_env_cfg(
       k: v
       for k, v in g1_constants.G1_ACTION_SCALE.items()
       if ("hip" in k or "knee" in k or "ankle" in k)
+      or (waist == "policy" and "waist" in k)
     }
   upper = cfg.actions["upper_body_pose"]
   assert isinstance(upper, mdp.UpperBodyPoseActionCfg)
@@ -343,7 +381,8 @@ def unitree_g1_homie_env_cfg(
   elif waist == "free":
     upper.joint_names = G1_UPPER_BODY_JOINTS
   else:
-    raise ValueError(f"Unknown waist variant '{waist}'. Use 'locked' or 'free'.")
+    # The policy owns the waist; only the arms are disturbed.
+    upper.joint_names = G1_ARM_JOINTS
   cfg.events["upper_body_goals"].params["start_step"] = step_threshold
   cfg.curriculum["upper_body_action"].params["start_step"] = step_threshold
 
@@ -398,7 +437,7 @@ def unitree_g1_homie_env_cfg(
   cfg.rewards["feet_clearance"].params["min_height"] = G1_CLEARANCE_GATE
   cfg.rewards["feet_clearance"].params["target_height"] = 0.14
 
-  lower_cfg = SceneEntityCfg("robot", joint_names=G1_LOWER_BODY_JOINTS)
+  lower_cfg = SceneEntityCfg("robot", joint_names=policy_joints)
   for name in (
     "dof_pos_limits",
     "torques",
@@ -408,11 +447,21 @@ def unitree_g1_homie_env_cfg(
     "joint_tracking_error",
   ):
     cfg.rewards[name].params["asset_cfg"] = lower_cfg
-  cfg.rewards["torques"].params["stiffness"] = (
+  stiffness = (
     G1_DEPLOY_LOWER_STIFFNESS if gains == "deploy" else G1_MJLAB_LOWER_STIFFNESS
   )
-  cfg.rewards["dof_vel_limits"].params["velocity_limits"] = G1_LOWER_VELOCITY_LIMITS
-  cfg.rewards["torque_limits"].params["effort_limits"] = G1_LOWER_EFFORT_LIMITS
+  velocity_limits = G1_LOWER_VELOCITY_LIMITS
+  effort_limits = G1_LOWER_EFFORT_LIMITS
+  if waist == "policy":
+    waist_stiffness = (
+      G1_DEPLOY_WAIST_STIFFNESS if gains == "deploy" else G1_MJLAB_WAIST_STIFFNESS
+    )
+    stiffness = {**stiffness, **waist_stiffness}
+    velocity_limits = {**velocity_limits, **G1_WAIST_VELOCITY_LIMITS}
+    effort_limits = {**effort_limits, **G1_WAIST_EFFORT_LIMITS}
+  cfg.rewards["torques"].params["stiffness"] = stiffness
+  cfg.rewards["dof_vel_limits"].params["velocity_limits"] = velocity_limits
+  cfg.rewards["torque_limits"].params["effort_limits"] = effort_limits
 
   # OpenHomie measures foot-parallelism on sampled foot surface points; the
   # mjlab G1 has no per-corner sites, so the foot collision spheres are used.
@@ -460,6 +509,33 @@ def unitree_g1_homie_env_cfg(
       func=mdp.body_ang_vel_xy_penalty,
       weight=-0.05,
       params={"asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",))},
+    )
+
+  if waist == "policy":
+    # The policy now holds the torso on the waist. Weights follow FALCON's
+    # lower-body agent (torso tilt -1.0; torso roll/pitch rate -1.0, halved
+    # here as a first iteration). The deviation term stands in for FALCON's
+    # waist command tracking (zero target while walking), as HoMIe v2 has no
+    # waist command; min_height=0.0 leaves it ungated.
+    torso_cfg = SceneEntityCfg("robot", body_names=("torso_link",))
+    cfg.rewards["deviation_waist_joint"] = RewardTermCfg(
+      func=mdp.joint_deviation_gated,
+      weight=-1.0,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=G1_WAIST_JOINTS),
+        "height_command_name": "height",
+        "min_height": 0.0,
+      },
+    )
+    cfg.rewards["torso_orientation"] = RewardTermCfg(
+      func=mdp.body_orientation_penalty,
+      weight=-1.0,
+      params={"asset_cfg": torso_cfg},
+    )
+    cfg.rewards["torso_ang_vel_xy"] = RewardTermCfg(
+      func=mdp.body_ang_vel_xy_penalty,
+      weight=-0.5,
+      params={"asset_cfg": torso_cfg},
     )
 
   # Frozen OpenHomie-parity preset: revert every deliberate deviation kept in
