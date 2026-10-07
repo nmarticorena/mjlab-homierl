@@ -6,6 +6,7 @@ from mjlab.asset_zoo.robots.unitree_g1 import g1_constants
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
@@ -193,6 +194,7 @@ def unitree_g1_homie_env_cfg(
   hands: str | None = None,
   waist: str = "locked",
   native: bool = False,
+  smooth: bool = False,
 ) -> ManagerBasedRlEnvCfg:
   """Create the Unitree G1 HOMIE task configuration.
 
@@ -225,10 +227,15 @@ def unitree_g1_homie_env_cfg(
       unchanged, so checkpoints remain compatible with the base task.
       - ``"dex3"``: Unitree Dex3 (~0.53 kg each; BiGym's G1 is G1-Dex3).
       - ``"inspire"``: Inspire RH56 (RH56DFX spec weight, 0.54 kg each).
+    smooth: Anti-oscillation rewards. ``action_rate`` / ``smoothness`` are
+      measured in joint space relative to the 0.25 action scale they were
+      tuned for (with mjlab gains the raw-action terms are up to ~4.8x weaker
+      per radian), and roll/pitch rates are penalized on the torso as well as
+      the pelvis, which the default rewards do not observe.
   """
   if gains not in ("deploy", "mjlab"):
     raise ValueError(f"Unknown gains variant '{gains}'. Use 'deploy' or 'mjlab'.")
-  if native and (hands is not None or waist != "locked" or gains != "deploy"):
+  if native and (hands is not None or waist != "locked" or gains != "deploy" or smooth):
     raise ValueError("native=True pins OpenHomie parity; no other variants allowed.")
   cfg = make_homie_env_cfg()
 
@@ -440,6 +447,20 @@ def unitree_g1_homie_env_cfg(
   # anti-squat gradient that walled the 2026-07-03 run at ~0.67 m. Physical
   # self-contacts remain simulated; only the penalty is dropped.
   del cfg.rewards["self_collisions"]
+
+  if smooth:
+    for name, func in (
+      ("action_rate", mdp.action_rate_joint_l2),
+      ("smoothness", mdp.action_smoothness_joint_l2),
+    ):
+      cfg.rewards[name].func = func
+      cfg.rewards[name].params = {"action_name": "joint_pos", "reference_scale": 0.25}
+    cfg.rewards["ang_vel_xy"].weight = -0.05
+    cfg.rewards["torso_ang_vel_xy"] = RewardTermCfg(
+      func=mdp.body_ang_vel_xy_penalty,
+      weight=-0.05,
+      params={"asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",))},
+    )
 
   # Frozen OpenHomie-parity preset: revert every deliberate deviation kept in
   # the default task. The remaining diff between this preset and the default

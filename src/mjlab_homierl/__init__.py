@@ -7,6 +7,7 @@ from mjlab_homierl.env_cfgs import (
 from mjlab_homierl.rl import HomieHimOnPolicyRunner
 from mjlab_homierl.rl_cfg import (
   unitree_g1_homie_himppo_runner_cfg,
+  unitree_g1_homie_smooth_himppo_runner_cfg,
   unitree_h1_homie_himppo_runner_cfg,
 )
 
@@ -48,6 +49,19 @@ register_mjlab_task(
   env_cfg=unitree_g1_homie_env_cfg(gains="mjlab"),
   play_env_cfg=unitree_g1_homie_env_cfg(play=True, gains="mjlab"),
   rl_cfg=unitree_g1_homie_himppo_runner_cfg(),
+  runner_cls=HomieHimOnPolicyRunner,
+)
+
+# mjlab gains (the gains g1-deploy runs, shared with the dolly policy) on a
+# free waist, with the anti-oscillation rewards (see ``smooth``) and a lower
+# entropy bonus. Interface-identical to the other G1 tasks.
+register_mjlab_task(
+  task_id="Mjlab-Homie-Unitree-G1-mjlab_gains_smooth",
+  env_cfg=unitree_g1_homie_env_cfg(gains="mjlab", waist="free", smooth=True),
+  play_env_cfg=unitree_g1_homie_env_cfg(
+    play=True, gains="mjlab", waist="free", smooth=True
+  ),
+  rl_cfg=unitree_g1_homie_smooth_himppo_runner_cfg(),
   runner_cls=HomieHimOnPolicyRunner,
 )
 

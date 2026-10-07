@@ -98,7 +98,17 @@ class HomieOnnxPolicy:
     self.kds = np.array(
       [float(v) for v in m["joint_damping"].split(",")], dtype=np.float32
     )
-    self.action_scale = float(m["action_scale"])
+    action_scale = np.array(
+      [float(v) for v in m["action_scale"].split(",")], dtype=np.float32
+    )
+    if action_scale.size == 1:
+      action_scale = np.full(len(self.action_joint_names), action_scale.item())
+    if action_scale.size != len(self.action_joint_names):
+      raise ValueError(
+        f"Metadata declares {action_scale.size} action scales for "
+        f"{len(self.action_joint_names)} action joints."
+      )
+    self.action_scale = action_scale
     self.history_length = int(m["obs_history_length"])
     self.num_one_step_obs = int(m["num_one_step_obs"])
     layout = json.loads(m["one_step_obs_layout"])

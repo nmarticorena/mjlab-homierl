@@ -75,5 +75,18 @@ def unitree_g1_homie_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
   return homie_himppo_runner_cfg("g1_homie_himppo")
 
 
+def unitree_g1_homie_smooth_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
+  """G1 runner for the smooth task: lower entropy bonus, shorter run.
+
+  With ``entropy_coef=0.01`` the action std plateaus at ~0.5 from ~3k
+  iterations on (mjlab-gains run 9u2q4cno), i.e. ~0.27 rad of exploration
+  noise on hip pitch, and every metric is flat after ~3k iterations.
+  """
+  cfg = homie_himppo_runner_cfg("g1_homie_himppo")
+  cfg.algorithm.entropy_coef = 0.003
+  cfg.max_iterations = 8_000
+  return cfg
+
+
 def unitree_h1_homie_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
   return homie_himppo_runner_cfg("h1_homie_himppo")

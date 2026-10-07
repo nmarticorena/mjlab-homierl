@@ -157,6 +157,23 @@ def ang_vel_xy_penalty(
   return torch.sum(torch.square(asset.data.root_link_ang_vel_b[:, :2]), dim=1)
 
 
+def body_ang_vel_xy_penalty(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
+) -> torch.Tensor:
+  """Penalize roll/pitch rates of ``asset_cfg.body_names``, in each body's frame.
+
+  ``ang_vel_xy_penalty`` only sees the pelvis; with a compliant waist the torso
+  can oscillate on top of a steady pelvis.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  quat = asset.data.body_link_quat_w[:, asset_cfg.body_ids]
+  ang_vel_w = asset.data.body_link_ang_vel_w[:, asset_cfg.body_ids]
+  ang_vel_b = quat_apply_inverse(quat.reshape(-1, 4), ang_vel_w.reshape(-1, 3)).view_as(
+    ang_vel_w
+  )
+  return torch.sum(torch.square(ang_vel_b[..., :2]), dim=(1, 2))
+
+
 def orientation_penalty(
   env: ManagerBasedRlEnv,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
@@ -239,6 +256,47 @@ def action_smoothness_l2(env: ManagerBasedRlEnv) -> torch.Tensor:
   """Second-order action difference penalty (OpenHomie ``smoothness``)."""
   mgr = env.action_manager
   diff = mgr.action - 2.0 * mgr.prev_action + mgr.prev_prev_action
+  return torch.sum(torch.square(diff), dim=1)
+
+
+def _joint_space_action(
+  env: ManagerBasedRlEnv,
+  action: torch.Tensor,
+  action_name: str,
+  reference_scale: float,
+) -> torch.Tensor:
+  """Manager-level actions in joint space, divided by ``reference_scale``."""
+  term = env.action_manager.get_term(action_name)
+  assert action.shape[1] == term.action_dim, (
+    f"'{action_name}' must be the only action term with policy dimensions."
+  )
+  return action * (term.scale / float(reference_scale))
+
+
+def action_rate_joint_l2(
+  env: ManagerBasedRlEnv, action_name: str, reference_scale: float = 0.25
+) -> torch.Tensor:
+  """``action_rate_l2`` measured in joint space, normalized to ``reference_scale``.
+
+  The OpenHomie weights were tuned for a uniform 0.25 action scale. With a
+  larger per-joint scale (mjlab gains: 0.35-0.55) the same raw-action penalty
+  allows up to (scale / 0.25)^2 more joint-space jerk. This term equals
+  ``action_rate_l2`` at a 0.25 scale, so the weight keeps its meaning.
+  """
+  mgr = env.action_manager
+  diff = _joint_space_action(
+    env, mgr.action - mgr.prev_action, action_name, reference_scale
+  )
+  return torch.sum(torch.square(diff), dim=1)
+
+
+def action_smoothness_joint_l2(
+  env: ManagerBasedRlEnv, action_name: str, reference_scale: float = 0.25
+) -> torch.Tensor:
+  """``action_smoothness_l2`` in joint space (see ``action_rate_joint_l2``)."""
+  mgr = env.action_manager
+  diff = mgr.action - 2.0 * mgr.prev_action + mgr.prev_prev_action
+  diff = _joint_space_action(env, diff, action_name, reference_scale)
   return torch.sum(torch.square(diff), dim=1)
 
 
