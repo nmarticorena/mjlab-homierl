@@ -33,6 +33,7 @@ dependencies = [
 
 [project.scripts]
 infer-homie-lowerbody = "mjlab_homierl.scripts.infer_h1_with_hands_lowerbody_policy:main"
+homie-export = "mjlab_homierl.scripts.export_policy:main"
 
 [project.entry-points."mjlab.tasks"]
 mjlab_homierl = "mjlab_homierl"
