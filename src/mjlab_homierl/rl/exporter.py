@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
+import yaml
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl.exporter_utils import (
   attach_metadata_to_onnx,
@@ -169,20 +170,18 @@ def homie_extra_metadata(env: ManagerBasedRlEnv) -> dict:
   try:
     twist_ranges = env.command_manager.get_term("twist").cfg.ranges
     metadata["command_frame"] = "base"
-    metadata["twist_command_ranges"] = json.dumps(
-      {
-        "lin_vel_x": list(twist_ranges.lin_vel_x),
-        "lin_vel_y": list(twist_ranges.lin_vel_y),
-        "ang_vel_z": list(twist_ranges.ang_vel_z),
-      }
-    )
+    metadata["twist_command_ranges"] = {
+      "lin_vel_x": list(twist_ranges.lin_vel_x),
+      "lin_vel_y": list(twist_ranges.lin_vel_y),
+      "ang_vel_z": list(twist_ranges.ang_vel_z),
+    }
   except KeyError:
     pass
 
   # The joints the policy's action vector maps to, in output order (the base
   # `joint_names` field lists the full robot; actions cover a subset).
   action_term = env.action_manager.get_term("joint_pos")
-  metadata["action_joint_names"] = ",".join(action_term._target_names)
+  metadata["action_joint_names"] = list(action_term._target_names)
 
   # Observation scaling and layout of the flattened actor history.
   obs_term_cfg = env.observation_manager.get_term_cfg("actor", "him_obs")
@@ -200,32 +199,110 @@ def homie_extra_metadata(env: ManagerBasedRlEnv) -> dict:
   # full `joint_names` order; commands are (vx, vy, wz, height).
   robot = env.scene["robot"]
   num_joints = len(robot.joint_names)
-  metadata["one_step_obs_layout"] = json.dumps(
-    {
-      "command": 4,
-      "base_ang_vel": 3,
-      "projected_gravity": 3,
-      "joint_pos_rel": num_joints,
-      "joint_vel": num_joints,
-      "last_action": int(action_term.action_dim),
-    }
-  )
+  metadata["one_step_obs_layout"] = {
+    "command": 4,
+    "base_ang_vel": 3,
+    "projected_gravity": 3,
+    "joint_pos_rel": num_joints,
+    "joint_vel": num_joints,
+    "last_action": int(action_term.action_dim),
+  }
+
+  # Low-level control: effort limits (natural joint order, like the base
+  # stiffness/damping) and the control rate the policy was trained at.
+  joint_name_to_ctrl_id = {
+    actuator.target.split("/")[-1]: actuator.id for actuator in robot.spec.actuators
+  }
+  ctrl_ids_natural = [
+    joint_name_to_ctrl_id[name]
+    for name in robot.joint_names
+    if name in joint_name_to_ctrl_id
+  ]
+  metadata["joint_effort_limit"] = env.sim.mj_model.actuator_forcerange[
+    ctrl_ids_natural, 1
+  ].tolist()
+  physics_timestep = float(env.sim.mj_model.opt.timestep)
+  decimation = int(env.cfg.decimation)
+  metadata["physics_timestep_s"] = physics_timestep
+  metadata["control_decimation"] = decimation
+  metadata["control_dt_s"] = physics_timestep * decimation
+  metadata["control_rate_hz"] = 1.0 / (physics_timestep * decimation)
 
   return metadata
 
 
+def build_homie_metadata(
+  env: ManagerBasedRlEnv, run_path: str, extra: dict | None = None
+) -> dict:
+  """Base mjlab metadata + HOMIE fields (+ `extra` overrides), native types.
+
+  Single source for both the ONNX metadata props and `metadata.yaml`, so the
+  two never disagree.
+  """
+  metadata = get_base_metadata(env, run_path)
+  metadata.update(homie_extra_metadata(env))
+  metadata.update(extra or {})
+  return metadata
+
+
+def write_metadata_yaml(metadata: dict, path: str | Path) -> Path:
+  """Write `metadata` as a human-readable YAML next to the ONNX export."""
+  path = Path(path)
+  path.parent.mkdir(parents=True, exist_ok=True)
+  with path.open("w") as f:
+    yaml.safe_dump(metadata, f, sort_keys=False)
+  return path
+
+
 def attach_onnx_metadata(
-  env: ManagerBasedRlEnv, run_path: str, path: str, filename="policy.onnx"
+  env: ManagerBasedRlEnv,
+  run_path: str,
+  path: str,
+  filename="policy.onnx",
+  metadata: dict | None = None,
 ) -> None:
   """Attach base + HOMIE-specific metadata to an exported ONNX model.
+
+  ONNX metadata props are strings: lists become CSV (mjlab convention) and
+  dicts become JSON, which is what `mjlab_homierl.runtime` parses.
 
   Args:
     env: The RL environment.
     run_path: W&B run path or other identifier.
     path: Directory containing the ONNX file.
     filename: Name of the ONNX file.
+    metadata: Prebuilt metadata (see `build_homie_metadata`); built if None.
   """
   onnx_path = os.path.join(path, filename)
-  metadata = get_base_metadata(env, run_path)
-  metadata.update(homie_extra_metadata(env))
-  attach_metadata_to_onnx(onnx_path, metadata)
+  if metadata is None:
+    metadata = build_homie_metadata(env, run_path)
+  attach_metadata_to_onnx(
+    onnx_path,
+    {k: json.dumps(v) if isinstance(v, dict) else v for k, v in metadata.items()},
+  )
+
+
+def export_homie_deployment(
+  actor_critic: object,
+  env: ManagerBasedRlEnv,
+  out_dir: str | Path,
+  run_path: str,
+  onnx_filename: str = "policy.onnx",
+  yaml_filename: str = "metadata.yaml",
+  extra_metadata: dict | None = None,
+) -> tuple[Path, Path]:
+  """Export the policy ONNX (with metadata props) and `metadata.yaml`.
+
+  Returns:
+    (onnx_path, yaml_path)
+  """
+  out_dir = Path(out_dir)
+  export_homie_policy_as_onnx(
+    actor_critic, path=str(out_dir), normalizer=None, filename=onnx_filename
+  )
+  metadata = build_homie_metadata(env, run_path, extra_metadata)
+  attach_onnx_metadata(
+    env, run_path, path=str(out_dir), filename=onnx_filename, metadata=metadata
+  )
+  yaml_path = write_metadata_yaml(metadata, out_dir / yaml_filename)
+  return out_dir / onnx_filename, yaml_path

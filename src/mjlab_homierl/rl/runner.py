@@ -8,7 +8,7 @@ from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.rl.runner import MjlabOnPolicyRunner
 
 from mjlab_homierl.rl.exporter import (
-  attach_onnx_metadata,
+  export_homie_deployment,
   export_homie_policy_as_onnx,
 )
 from mjlab_homierl.rl.himppo.actor_critic import HIMActorCritic, HimObsLayout
@@ -121,21 +121,24 @@ class HomieHimOnPolicyRunner(MjlabOnPolicyRunner):
   def save(self, path: str, infos=None) -> None:
     super().save(path, infos)
 
-    policy_path = path.split("model")[0]
-    filename = os.path.basename(os.path.dirname(policy_path)) + ".onnx"
+    # Next to the checkpoint: `<run_dir_name>.onnx` (policy + metadata props)
+    # and `metadata.yaml` (same metadata, human/C++-readable).
+    policy_dir, filename, _ = self._get_export_paths(path)
     try:
-      self.export_policy_to_onnx(policy_path, filename)
-      run_name = (
-        wandb.run.name if self.logger.logger_type == "wandb" and wandb.run else "local"
-      )  # type: ignore[assignment]
-      attach_onnx_metadata(
+      # rsl_rl resolves the "wandb" logger to "WandbLogWriter".
+      is_wandb = self.logger.logger_type in ("wandb", "WandbLogWriter")
+      run_name = (wandb.run.name or "local") if is_wandb and wandb.run else "local"
+      onnx_path, yaml_path = export_homie_deployment(
+        self.alg.get_policy(),
         self.env.unwrapped,
+        policy_dir,
         run_name,
-        path=policy_path,
-        filename=filename,
+        onnx_filename=filename,
+        extra_metadata={"checkpoint": os.path.basename(path)},
       )
-      if self.logger.logger_type in ["wandb"] and self.cfg["upload_model"]:
-        wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
+      if is_wandb and self.cfg["upload_model"]:
+        for file in (onnx_path, yaml_path):
+          wandb.save(str(file), base_path=str(policy_dir))
     except Exception as e:
       print(f"[WARN] HOMIE ONNX export failed (training continues): {e}")
 
