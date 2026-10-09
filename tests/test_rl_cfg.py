@@ -2,6 +2,7 @@ from mjlab_homierl.rl_cfg import (
   unitree_g1_homie_himppo_runner_cfg,
   unitree_g1_homie_smooth_himppo_runner_cfg,
   unitree_g1_homie_v2_himppo_runner_cfg,
+  unitree_g1_homie_v3_himppo_runner_cfg,
   unitree_h1_homie_himppo_runner_cfg,
 )
 
@@ -33,3 +34,13 @@ def test_g1_v2_runner_cfg() -> None:
   v2 = unitree_g1_homie_v2_himppo_runner_cfg()
   assert v2.experiment_name == "g1_homie_v2_himppo"
   assert v2.algorithm.entropy_coef == 0.01
+
+
+def test_g1_v3_runner_cfg() -> None:
+  v2 = unitree_g1_homie_v2_himppo_runner_cfg()
+  v3 = unitree_g1_homie_v3_himppo_runner_cfg()
+  assert v3.experiment_name == "g1_homie_v3_himppo"
+  assert v3.max_iterations == 4_000
+  # Same network as v2, so the v2 checkpoint loads.
+  assert v3.actor == v2.actor and v3.critic == v2.critic
+  assert v3.upload_model is False

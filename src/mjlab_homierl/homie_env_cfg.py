@@ -25,6 +25,15 @@ from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.terrains import TerrainEntityCfg
+from mjlab.terrains.config import (
+  flat,
+  hf_pyramid_slope,
+  hf_pyramid_slope_inv,
+  pyramid_stairs,
+  pyramid_stairs_inv,
+  random_rough,
+)
+from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
@@ -34,6 +43,36 @@ from mjlab_homierl.mdp import RelativeHeightCommandCfg, UniformVelocityCommandCf
 # Observation scaling constants (legged_gym defaults).
 OBS_SCALES = {"lin_vel": 2.0, "ang_vel": 0.5, "dof_pos": 1.0, "dof_vel": 0.05}
 NOISE_SCALES = {"dof_pos": 0.02, "dof_vel": 2.0, "ang_vel": 0.5, "gravity": 0.05}
+
+
+def make_indoor_terrain_cfg() -> TerrainGeneratorCfg:
+  """Mild terrain for a blind HOMIE policy: lab floors, mats, ramps, cables.
+
+  Curriculum mode (one column per terrain type, difficulty along the 10
+  rows; see ``mdp.terrain_levels_survival``). At the hardest level: +-3 cm
+  roughness, ~10 deg slopes (rise/run 0.18) and 5 cm steps.
+  """
+  return TerrainGeneratorCfg(
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=10,
+    num_cols=20,
+    curriculum=True,
+    sub_terrains={
+      "flat": flat(proportion=0.3),
+      "random_rough": random_rough(
+        proportion=0.25,
+        noise_range=(0.0, 0.03),
+        noise_step=0.005,
+        scale_with_difficulty=True,
+      ),
+      "slope": hf_pyramid_slope(proportion=0.125, slope_range=(0.0, 0.18)),
+      "slope_inv": hf_pyramid_slope_inv(proportion=0.125, slope_range=(0.0, 0.18)),
+      "steps": pyramid_stairs(proportion=0.1, step_height_range=(0.0, 0.05)),
+      "steps_inv": pyramid_stairs_inv(proportion=0.1, step_height_range=(0.0, 0.05)),
+    },
+    add_lights=True,
+  )
 
 
 def make_him_observations(

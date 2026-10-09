@@ -166,6 +166,54 @@ def test_g1_smooth_variant() -> None:
     unitree_g1_homie_env_cfg(native=True, smooth=True)
 
 
+def test_g1_v3_robustness_knobs() -> None:
+  from mjlab.tasks.registry import load_env_cfg
+
+  import mjlab_homierl  # noqa: F401
+  from mjlab_homierl import mdp
+  from mjlab_homierl.env_cfgs import G1_REACH_ANCHORS, G1_REACH_BOX
+
+  v2 = load_env_cfg("Mjlab-Homie-Unitree-G1-v2")
+  v3 = load_env_cfg("Mjlab-Homie-Unitree-G1-v3")
+  # Interface-identical to v2, so v3 fine-tunes from a v2 checkpoint.
+  assert (
+    v3.actions["joint_pos"].actuator_names == v2.actions["joint_pos"].actuator_names
+  )
+  assert v3.actions["joint_pos"].scale == v2.actions["joint_pos"].scale
+  for group in ("actor", "critic"):
+    assert v3.observations[group].terms.keys() == v2.observations[group].terms.keys()
+  # Reach scenarios mixed into the random arm goals.
+  upper = v3.actions["upper_body_pose"]
+  assert upper.reach_probability > 0.0
+  assert upper.reach_anchors == G1_REACH_ANCHORS
+  assert upper.reach_box == G1_REACH_BOX
+  assert upper.initial_ratio == 1.0
+  assert v2.actions["upper_body_pose"].reach_probability == 0.0
+  # Stand-in-place drift penalty and a larger stand share.
+  assert v3.rewards["stand_position_drift"].func is mdp.stand_position_drift
+  assert v3.rewards["stand_position_drift"].weight < 0.0
+  twist = v3.commands["twist"]
+  assert (twist.squat_probability, twist.stand_probability) == (0.25, 0.3)
+  assert "stand_position_drift" not in v2.rewards
+  # Mild indoor terrain with the survival curriculum.
+  assert v3.scene.terrain.terrain_type == "generator"
+  assert v3.curriculum["terrain_levels"].func is mdp.terrain_levels_survival
+  assert v2.scene.terrain.terrain_type == "plane"
+  # The anchors and box only name arm joints (the policy owns the waist).
+  arm = set(upper.joint_names)
+  assert set(G1_REACH_BOX) <= arm and all(set(a) <= arm for a in G1_REACH_ANCHORS)
+  with pytest.raises(ValueError):
+    unitree_g1_homie_env_cfg(terrain="stairs")
+  with pytest.raises(ValueError):
+    unitree_g1_homie_env_cfg(native=True, reach=True)
+
+
+def test_homie_command_mode_defaults_match_openhomie() -> None:
+  twist = unitree_g1_homie_env_cfg().commands["twist"]
+  assert math.isclose(twist.squat_probability, 1.0 / 3.0)
+  assert math.isclose(twist.stand_probability, 1.0 / 6.0)
+
+
 def test_g1_base_task_matches_openhomie_interface() -> None:
   base = unitree_g1_homie_env_cfg()
   # One-step obs 80 = 4 commands + 6 + 2 * 29 joints + 12 actions.

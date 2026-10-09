@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Sequence
 
 import torch
@@ -102,6 +102,12 @@ class UpperBodyPoseAction(ActionTerm):
     uniform factor.
   - The target direction is a fair coin between the joint's lower and upper hard
     limit, so target amplitudes are proportional to each joint's range.
+
+  Optionally (``reach_probability > 0``), environments also enter "hands
+  forward" reach scenarios, mixed with the random goals: the arms move to a
+  reach pose over ``reach_transition_s`` and hold it for ``reach_hold_s``, like
+  a deployed arm IK raising the hands to a handle. The pose is a configured
+  anchor plus noise, or a uniform sample from ``reach_box``.
   """
 
   cfg: "UpperBodyPoseActionCfg"
@@ -128,6 +134,51 @@ class UpperBodyPoseAction(ActionTerm):
     self._goal = self._default.clone()
     self._delta = torch.zeros_like(self._default)
     self._interval_steps = max(1, int(round(cfg.interval_s / env.step_dt)))
+
+    # Reach scenarios. _reach_left counts the goal resamplings left in an
+    # env's current scenario (0: random goals).
+    self._lower = limits[..., 0]
+    self._upper = limits[..., 1]
+    self._reach_left = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+    self._reach_transition_steps = max(
+      1, int(round(cfg.reach_transition_s / env.step_dt))
+    )
+    unknown = {
+      name
+      for pose in (*cfg.reach_anchors, cfg.reach_box)
+      for name in pose
+      if name not in joint_names
+    }
+    if unknown:
+      raise ValueError(f"Reach poses name non-upper-body joints: {sorted(unknown)}.")
+    default = self._default[0]
+    self._reach_anchors = (
+      torch.stack(
+        [
+          torch.tensor(
+            [anchor.get(name, float(default[i])) for i, name in enumerate(joint_names)],
+            device=self.device,
+          )
+          for anchor in cfg.reach_anchors
+        ]
+      )
+      if cfg.reach_anchors
+      else torch.zeros(0, len(joint_names), device=self.device)
+    )
+    self._reach_box_low = torch.tensor(
+      [
+        cfg.reach_box.get(name, (float(default[i]),) * 2)[0]
+        for i, name in enumerate(joint_names)
+      ],
+      device=self.device,
+    )
+    self._reach_box_high = torch.tensor(
+      [
+        cfg.reach_box.get(name, (float(default[i]),) * 2)[1]
+        for i, name in enumerate(joint_names)
+      ],
+      device=self.device,
+    )
 
     self._curriculum_ratio = torch.tensor(
       cfg.initial_ratio, device=self.device, dtype=torch.float32
@@ -164,13 +215,68 @@ class UpperBodyPoseAction(ActionTerm):
     self._current[env_ids] = self._default[env_ids]
     self._goal[env_ids] = self._default[env_ids]
     self._delta[env_ids] = 0.0
+    self._reach_left[env_ids] = 0
 
   # HOMIE goal sampling and curriculum.
 
   def sample_new_goals(self, env_ids: torch.Tensor | slice | None = None) -> None:
-    if env_ids is None:
-      env_ids = slice(None)
+    if env_ids is None or isinstance(env_ids, slice):
+      env_ids = torch.arange(self.num_envs, device=self.device)[
+        slice(None) if env_ids is None else env_ids
+      ]
+    random_ids = env_ids
+    if self.cfg.reach_probability > 0.0:
+      # Envs mid-scenario keep their reach goal; the others may start one,
+      # with a probability that grows with the curriculum ratio.
+      left = self._reach_left[env_ids]
+      holding = left > 1
+      self._reach_left[env_ids] = torch.clamp(left - 1, min=0)
+      probability = self.cfg.reach_probability * float(
+        self._curriculum_ratio.clamp(0.0, 1.0)
+      )
+      start = ~holding & (torch.rand(len(env_ids), device=self.device) < probability)
+      self._start_reach(env_ids[start])
+      random_ids = env_ids[~holding & ~start]
+    if len(random_ids) > 0:
+      self._sample_random_goals(random_ids)
 
+  def _start_reach(self, env_ids: torch.Tensor) -> None:
+    n = len(env_ids)
+    if n == 0:
+      return
+    num_joints = self._default.shape[1]
+    box = self._reach_box_low + torch.rand(n, num_joints, device=self.device) * (
+      self._reach_box_high - self._reach_box_low
+    )
+    pose = box
+    if len(self._reach_anchors) > 0:
+      anchor = self._reach_anchors[
+        torch.randint(len(self._reach_anchors), (n,), device=self.device)
+      ]
+      noise = self.cfg.reach_anchor_noise * (
+        2.0 * torch.rand(n, num_joints, device=self.device) - 1.0
+      )
+      use_anchor = (
+        torch.rand(n, 1, device=self.device) < self.cfg.reach_anchor_probability
+      )
+      pose = torch.where(use_anchor, anchor + noise, box)
+    goal = torch.clamp(pose, self._lower[env_ids], self._upper[env_ids])
+    self._goal[env_ids] = goal
+    self._delta[env_ids] = (goal - self._current[env_ids]) / float(
+      self._reach_transition_steps
+    )
+    low, high = self.cfg.reach_hold_s
+    hold_s = low + torch.rand(n, device=self.device) * (high - low)
+    self._reach_left[env_ids] = torch.clamp(
+      torch.round(hold_s / self.cfg.interval_s).long(), min=1
+    )
+
+  @property
+  def in_reach(self) -> torch.Tensor:
+    """Per env: whether a reach scenario is active."""
+    return self._reach_left > 0
+
+  def _sample_random_goals(self, env_ids: torch.Tensor) -> None:
     defaults = self._default[env_ids]
     shape = defaults.shape
 
@@ -210,6 +316,24 @@ class UpperBodyPoseActionCfg(ActionTermCfg):
   """Goal resampling interval; must match the driving interval event."""
   initial_ratio: float = 0.0
   """Initial curriculum ratio (0 disables upper-body motion)."""
+  reach_probability: float = 0.0
+  """Per env and goal resampling, the probability (times the curriculum
+  ratio) that an env not in a reach scenario starts one. 0 keeps OpenHomie's
+  random goals only."""
+  reach_hold_s: tuple[float, float] = (3.0, 8.0)
+  """Duration range of a reach scenario, transition included."""
+  reach_transition_s: float = 2.0
+  """Time to move from the current pose to the reach pose."""
+  reach_anchors: tuple[dict[str, float], ...] = ()
+  """Reach poses by joint name; unlisted joints keep their default."""
+  reach_anchor_probability: float = 0.5
+  """Probability that a reach uses an anchor (plus noise) instead of
+  ``reach_box``."""
+  reach_anchor_noise: float = 0.2
+  """Uniform per-joint noise (rad) added to an anchor."""
+  reach_box: dict[str, tuple[float, float]] = field(default_factory=dict)
+  """Per-joint (low, high) ranges for box-sampled reach poses; unlisted joints
+  keep their default."""
 
   def build(self, env: ManagerBasedRlEnv) -> UpperBodyPoseAction:
     return UpperBodyPoseAction(self, env)

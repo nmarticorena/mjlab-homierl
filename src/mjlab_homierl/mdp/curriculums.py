@@ -60,3 +60,25 @@ def upper_body_action_curriculum(
     "ratio": action_term.curriculum_ratio.unsqueeze(0),
     "avg_raw_reward": avg_raw_reward,
   }
+
+
+def terrain_levels_survival(
+  env: ManagerBasedRlEnv,
+  env_ids: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+  """Move envs to harder terrain when they survive, easier when they fall.
+
+  mjlab's ``terrain_levels_vel`` promotes envs that walked far enough for
+  their command, but HOMIE spends half its time standing or squatting and
+  resamples its command every 4 s, so distance says little. A blind HOMIE
+  policy's terrain skill shows as not falling: an episode that reached its
+  time-out moves up one level, an early termination moves down one.
+  """
+  terrain = env.scene.terrain
+  assert terrain is not None
+  time_outs = env.termination_manager.time_outs[env_ids]
+  move_up = time_outs
+  move_down = ~time_outs
+  terrain.update_env_origins(env_ids, move_up, move_down)
+  levels = terrain.terrain_levels.float()
+  return {"mean": torch.mean(levels), "max": torch.max(levels)}

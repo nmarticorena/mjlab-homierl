@@ -808,6 +808,59 @@ def stand_still(
   return num_feet_no_contact * gate
 
 
+class stand_position_drift:
+  """Penalize drifting away from where the robot stood when told to stand.
+
+  When the twist command drops to zero (stand and squat modes), the base xy
+  position and heading are anchored; while it stays zero the term returns the
+  xy distance from the anchor (m) plus ``yaw_weight`` times the heading change
+  (rad), each clamped to ``max_drift``. ``feet_slip`` and ``stand_still`` only
+  see sliding and lifted feet, so slow shuffling away was otherwise free.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self._anchor_xy = torch.zeros(env.num_envs, 2, device=env.device)
+    self._anchor_yaw = torch.zeros(env.num_envs, device=env.device)
+    self._was_standing = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    self._was_standing[slice(None) if env_ids is None else env_ids] = False
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    command_threshold: float = 0.1,
+    yaw_weight: float = 0.5,
+    max_drift: float = 1.0,
+  ) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    assert command is not None
+    standing = torch.norm(command[:, :3], dim=1) < float(command_threshold)
+
+    pos_xy = asset.data.root_link_pos_w[:, :2]
+    quat = asset.data.root_link_quat_w
+    yaw = torch.atan2(
+      2.0 * (quat[:, 0] * quat[:, 3] + quat[:, 1] * quat[:, 2]),
+      1.0 - 2.0 * (quat[:, 2] ** 2 + quat[:, 3] ** 2),
+    )
+    start = standing & ~self._was_standing
+    self._anchor_xy[start] = pos_xy[start]
+    self._anchor_yaw[start] = yaw[start]
+    self._was_standing = standing
+
+    drift_xy = torch.norm(pos_xy - self._anchor_xy, dim=1)
+    drift_yaw = torch.abs(
+      torch.atan2(torch.sin(yaw - self._anchor_yaw), torch.cos(yaw - self._anchor_yaw))
+    )
+    drift = torch.clamp(drift_xy, max=float(max_drift)) + float(
+      yaw_weight
+    ) * torch.clamp(drift_yaw, max=float(max_drift))
+    return drift * standing.float()
+
+
 ##
 # Contact penalties (replacements for IsaacGym contact-based terminations).
 ##

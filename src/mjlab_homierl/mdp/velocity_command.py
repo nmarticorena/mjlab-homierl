@@ -7,6 +7,8 @@ exclusive modes (OpenHomie scheme):
 - walk   (p = 1/2): random twist, standing height target
 - stand  (p = 1/6): zero twist, standing height target
 
+The squat and stand probabilities are configurable (walk takes the rest).
+
 The twist command samples the mode and exposes it via :attr:`mode`; the height
 command couples to it. Both commands must share the same resampling interval,
 and the twist command must precede the height command in the commands dict.
@@ -68,8 +70,9 @@ class UniformVelocityCommand(CommandTerm):
 
   def _resample_command(self, env_ids: torch.Tensor) -> None:
     u = torch.rand(len(env_ids), device=self.device)
-    is_squat = u < (1.0 / 3.0)
-    is_walk = u > (1.0 / 2.0)
+    squat_p = float(self.cfg.squat_probability)
+    is_squat = u < squat_p
+    is_walk = u >= squat_p + float(self.cfg.stand_probability)
 
     self.mode[env_ids] = MODE_STAND
     self.mode[env_ids[is_walk]] = MODE_WALK
@@ -135,6 +138,11 @@ class UniformVelocityCommandCfg(CommandTermCfg):
     ang_vel_z: tuple[float, float]
 
   ranges: Ranges
+  squat_probability: float = 1.0 / 3.0
+  """Probability of the squat mode (zero twist, random height)."""
+  stand_probability: float = 1.0 / 6.0
+  """Probability of the stand mode (zero twist, standing height). Walk takes
+  the remaining probability; squat + stand must not exceed 1."""
 
   @dataclass
   class VizCfg:

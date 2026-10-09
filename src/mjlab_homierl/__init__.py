@@ -9,6 +9,7 @@ from mjlab_homierl.rl_cfg import (
   unitree_g1_homie_himppo_runner_cfg,
   unitree_g1_homie_smooth_himppo_runner_cfg,
   unitree_g1_homie_v2_himppo_runner_cfg,
+  unitree_g1_homie_v3_himppo_runner_cfg,
   unitree_h1_homie_himppo_runner_cfg,
 )
 
@@ -77,6 +78,27 @@ register_mjlab_task(
     play=True, gains="mjlab", waist="policy", smooth=True
   ),
   rl_cfg=unitree_g1_homie_v2_himppo_runner_cfg(),
+  runner_cls=HomieHimOnPolicyRunner,
+)
+
+# HoMIe v3: v2 made robust for deployment, interface-identical to v2 so it
+# fine-tunes from a v2 checkpoint. Adds "hands forward" reach scenarios mixed
+# into the random arm goals, a stand-in-place drift penalty with a larger
+# stand share, and mild indoor terrain with a survival-based curriculum.
+_V3_KWARGS = dict(
+  gains="mjlab",
+  waist="policy",
+  smooth=True,
+  terrain="indoor",
+  reach=True,
+  stand_hold=True,
+  upper_initial_ratio=1.0,
+)
+register_mjlab_task(
+  task_id="Mjlab-Homie-Unitree-G1-v3",
+  env_cfg=unitree_g1_homie_env_cfg(**_V3_KWARGS),
+  play_env_cfg=unitree_g1_homie_env_cfg(play=True, **_V3_KWARGS),
+  rl_cfg=unitree_g1_homie_v3_himppo_runner_cfg(),
   runner_cls=HomieHimOnPolicyRunner,
 )
 

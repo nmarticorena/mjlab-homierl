@@ -5,14 +5,20 @@ import os
 from mjlab.asset_zoo.robots.unitree_g1 import g1_constants
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
+from mjlab.terrains import TerrainEntityCfg
 
 from mjlab_homierl import mdp
-from mjlab_homierl.homie_env_cfg import make_him_observations, make_homie_env_cfg
+from mjlab_homierl.homie_env_cfg import (
+  make_him_observations,
+  make_homie_env_cfg,
+  make_indoor_terrain_cfg,
+)
 from mjlab_homierl.mdp import RelativeHeightCommandCfg, UniformVelocityCommandCfg
 from mjlab_homierl.robots import get_h1_robot_cfg
 from mjlab_homierl.robots.inspire_rh56 import (
@@ -156,6 +162,45 @@ G1_ARM_JOINTS: tuple[str, ...] = tuple(
   j for j in G1_UPPER_BODY_JOINTS if j not in G1_WAIST_JOINTS
 )
 
+# "Hands forward" reach scenarios (reach=True). The anchor is g1-deploy's
+# dolly grasp posture (config/g1_impedance.yaml grasp.posture: the arm pose the
+# dolly policy holds the handles with); the box spans arms raised forward to
+# roughly chest height with the elbows anywhere from straight to bent.
+G1_REACH_ANCHORS: tuple[dict[str, float], ...] = (
+  {
+    "left_shoulder_pitch_joint": -1.125,
+    "left_shoulder_roll_joint": 0.261,
+    "left_shoulder_yaw_joint": -1.899,
+    "left_elbow_joint": 0.776,
+    "left_wrist_roll_joint": -1.328,
+    "left_wrist_pitch_joint": -0.427,
+    "left_wrist_yaw_joint": 0.797,
+    "right_shoulder_pitch_joint": -0.987,
+    "right_shoulder_roll_joint": -0.348,
+    "right_shoulder_yaw_joint": 1.764,
+    "right_elbow_joint": 0.703,
+    "right_wrist_roll_joint": 1.416,
+    "right_wrist_pitch_joint": -0.732,
+    "right_wrist_yaw_joint": -0.775,
+  },
+)
+G1_REACH_BOX: dict[str, tuple[float, float]] = {
+  "left_shoulder_pitch_joint": (-1.4, -0.3),
+  "left_shoulder_roll_joint": (-0.1, 0.5),
+  "left_shoulder_yaw_joint": (-0.6, 0.6),
+  "left_elbow_joint": (-0.2, 1.4),
+  "left_wrist_roll_joint": (-0.5, 0.5),
+  "left_wrist_pitch_joint": (-0.5, 0.5),
+  "left_wrist_yaw_joint": (-0.5, 0.5),
+  "right_shoulder_pitch_joint": (-1.4, -0.3),
+  "right_shoulder_roll_joint": (-0.5, 0.1),
+  "right_shoulder_yaw_joint": (-0.6, 0.6),
+  "right_elbow_joint": (-0.2, 1.4),
+  "right_wrist_roll_joint": (-0.5, 0.5),
+  "right_wrist_pitch_joint": (-0.5, 0.5),
+  "right_wrist_yaw_joint": (-0.5, 0.5),
+}
+
 # Standing pelvis height above the foot sites at the HOME keyframe (measured).
 G1_STANDING_HEIGHT = 0.78
 # Squat depth of 0.5 m, matching OpenHomie's height command range on G1.
@@ -221,6 +266,10 @@ def unitree_g1_homie_env_cfg(
   waist: str = "locked",
   native: bool = False,
   smooth: bool = False,
+  terrain: str = "plane",
+  reach: bool = False,
+  stand_hold: bool = False,
+  upper_initial_ratio: float = 0.0,
 ) -> ManagerBasedRlEnvCfg:
   """Create the Unitree G1 HOMIE task configuration.
 
@@ -263,11 +312,33 @@ def unitree_g1_homie_env_cfg(
       tuned for (with mjlab gains the raw-action terms are up to ~4.8x weaker
       per radian), and roll/pitch rates are penalized on the torso as well as
       the pelvis, which the default rewards do not observe.
+    terrain: ``"plane"`` (default) or ``"indoor"``: the mild curriculum mix of
+      ``make_indoor_terrain_cfg`` (roughness, ~10 deg slopes, 5 cm steps),
+      levelled by survival (``mdp.terrain_levels_survival``).
+    reach: Mix "hands forward" reach scenarios into the random upper-body
+      goals: the arms move to the deploy grasp posture (plus noise) or a
+      sampled forward pose over 2 s and hold it for 3-8 s.
+    stand_hold: Penalize drifting from where the robot stood when the twist
+      command dropped to zero (``mdp.stand_position_drift``), and raise the
+      stand share of the command modes from 1/6 to 0.3 (squat 1/3 -> 0.25).
+    upper_initial_ratio: Initial upper-body curriculum ratio. The ratio is not
+      stored in checkpoints, so a fine-tune from a trained policy starts at
+      1.0 instead of re-growing the disturbance from zero.
   """
   if gains not in ("deploy", "mjlab"):
     raise ValueError(f"Unknown gains variant '{gains}'. Use 'deploy' or 'mjlab'.")
-  if native and (hands is not None or waist != "locked" or gains != "deploy" or smooth):
+  if native and (
+    hands is not None
+    or waist != "locked"
+    or gains != "deploy"
+    or smooth
+    or terrain != "plane"
+    or reach
+    or stand_hold
+  ):
     raise ValueError("native=True pins OpenHomie parity; no other variants allowed.")
+  if terrain not in ("plane", "indoor"):
+    raise ValueError(f"Unknown terrain variant '{terrain}'. Use 'plane' or 'indoor'.")
   if waist not in ("locked", "free", "policy"):
     raise ValueError(
       f"Unknown waist variant '{waist}'. Use 'locked', 'free' or 'policy'."
@@ -536,6 +607,31 @@ def unitree_g1_homie_env_cfg(
       func=mdp.body_ang_vel_xy_penalty,
       weight=-0.5,
       params={"asset_cfg": torso_cfg},
+    )
+
+  upper.initial_ratio = upper_initial_ratio
+  if reach:
+    upper.reach_probability = 0.15
+    upper.reach_anchors = G1_REACH_ANCHORS
+    upper.reach_box = G1_REACH_BOX
+
+  if stand_hold:
+    twist.squat_probability = 0.25
+    twist.stand_probability = 0.3
+    cfg.rewards["stand_position_drift"] = RewardTermCfg(
+      func=mdp.stand_position_drift,
+      weight=-1.0,
+      params={"command_name": "twist"},
+    )
+
+  if terrain == "indoor":
+    cfg.scene.terrain = TerrainEntityCfg(
+      terrain_type="generator",
+      terrain_generator=make_indoor_terrain_cfg(),
+      max_init_terrain_level=2,
+    )
+    cfg.curriculum["terrain_levels"] = CurriculumTermCfg(
+      func=mdp.terrain_levels_survival
     )
 
   # Frozen OpenHomie-parity preset: revert every deliberate deviation kept in
