@@ -152,8 +152,38 @@ The runner config sets `upload_model=False`: metrics are logged to W&B (when
 the `wandb` logger is selected) but checkpoints and ONNX exports stay local.
 Use `--agent.logger tensorboard` to skip W&B entirely.
 
+Every checkpoint save also writes `<run_dir>/<run_dir>.onnx` (policy with
+metadata props) and `<run_dir>/metadata.yaml` (the same metadata: joint order,
+PD gains, effort limits, default pose, action scale, obs layout, command
+ranges, control rate). To regenerate both from a run's `.pt` weights:
+
+```bash
+# From a W&B run: finds the .pt files via the run's local log dir, falling back
+# to model_*.pt files uploaded to W&B. Default: latest checkpoint.
+uv run homie-export --task Mjlab-Homie-Unitree-G1-v2 \
+  --wandb-run-path <entity>/<project>/<run_id> [--checkpoint model_8000.pt] [--upload]
+# From a local checkpoint:
+uv run homie-export --task Mjlab-Homie-Unitree-G1 --checkpoint-file <run_dir>/model_4000.pt
+```
+
+Output goes to `<run_dir>/exported/<checkpoint>/{policy.onnx,metadata.yaml}`.
+Metadata comes from the *current* task config, so pass the task the run was
+trained with; the script warns if the result disagrees with the training-time
+ONNX.
+
 Note: the HIM-PPO algorithm is single-GPU; the upstream `--gpu-ids` multi-GPU
 path is not supported.
+
+HoMIe v3 (`Mjlab-Homie-Unitree-G1-v3`) is v2 made robust for deployment: "hands
+forward" reach scenarios mixed into the random arm goals, a stand-in-place
+drift penalty, and mild indoor terrain (roughness, ~10 deg slopes, 5 cm steps).
+Its interface is v2's, so it fine-tunes from a v2 checkpoint:
+
+```bash
+uv run train Mjlab-Homie-Unitree-G1-v3 --env.scene.num-envs 4096 \
+  --agent.resume True --wandb-run-path <entity>/<project>/<v2_run_id> \
+  --wandb-checkpoint-name model_7999.pt
+```
 
 Play:
 
