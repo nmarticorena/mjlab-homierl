@@ -112,30 +112,6 @@ def _apply_play_overrides(cfg: ManagerBasedRlEnvCfg) -> None:
   assert isinstance(upper, mdp.UpperBodyPoseActionCfg)
   upper.initial_ratio = float(os.environ.get("HOMIE_PLAY_UPPER_RATIO", "0.0"))
 
-  # Terrain during play, for tasks with generated terrain (v3), also via an
-  # environment variable:
-  #   HOMIE_PLAY_TERRAIN=0.5 uv run play ...    # every patch at difficulty 0.5
-  #   HOMIE_PLAY_TERRAIN=plane uv run play ...  # flat ground plane
-  # A number in [0, 1] samples each patch's type by its training proportion,
-  # all at that difficulty (1.0: the hardest training level). Unset keeps the
-  # training layout (one column per type, envs on the lowest levels).
-  play_terrain = os.environ.get("HOMIE_PLAY_TERRAIN")
-  terrain = cfg.scene.terrain
-  if play_terrain and terrain is not None and terrain.terrain_generator is not None:
-    if play_terrain == "plane":
-      terrain.terrain_type = "plane"
-      terrain.terrain_generator = None
-    else:
-      difficulty = float(play_terrain)
-      if not 0.0 <= difficulty <= 1.0:
-        raise ValueError("HOMIE_PLAY_TERRAIN must be 'plane' or within [0, 1].")
-      generator = terrain.terrain_generator
-      generator.curriculum = False
-      generator.difficulty_range = (difficulty, difficulty)
-      generator.num_rows = 4
-      generator.num_cols = 4
-      generator.border_width = 5.0
-
 
 ##
 # Unitree G1 (29 dof, 12 lower-body actions).
