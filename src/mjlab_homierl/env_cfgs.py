@@ -317,7 +317,8 @@ def unitree_g1_homie_env_cfg(
       levelled by survival (``mdp.terrain_levels_survival``).
     reach: Mix "hands forward" reach scenarios into the random upper-body
       goals: the arms move to the deploy grasp posture (plus noise) or a
-      sampled forward pose over 2 s and hold it for 3-8 s.
+      sampled forward pose over 2 s and hold it for 3-8 s; and static holds,
+      where the arms stop wherever they are and stay still for 2-6 s.
     stand_hold: Penalize drifting from where the robot stood when the twist
       command dropped to zero (``mdp.stand_position_drift``), and raise the
       stand share of the command modes from 1/6 to 0.3 (squat 1/3 -> 0.25).
@@ -614,6 +615,7 @@ def unitree_g1_homie_env_cfg(
     upper.reach_probability = 0.15
     upper.reach_anchors = G1_REACH_ANCHORS
     upper.reach_box = G1_REACH_BOX
+    upper.static_probability = 0.15
 
   if stand_hold:
     twist.squat_probability = 0.25

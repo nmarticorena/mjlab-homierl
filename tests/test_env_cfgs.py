@@ -188,6 +188,8 @@ def test_g1_v3_robustness_knobs() -> None:
   assert upper.reach_anchors == G1_REACH_ANCHORS
   assert upper.reach_box == G1_REACH_BOX
   assert upper.initial_ratio == 1.0
+  assert upper.static_probability > 0.0
+  assert v2.actions["upper_body_pose"].static_probability == 0.0
   assert v2.actions["upper_body_pose"].reach_probability == 0.0
   # Stand-in-place drift penalty and a larger stand share.
   assert v3.rewards["stand_position_drift"].func is mdp.stand_position_drift

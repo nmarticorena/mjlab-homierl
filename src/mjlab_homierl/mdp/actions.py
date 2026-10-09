@@ -108,6 +108,10 @@ class UpperBodyPoseAction(ActionTerm):
   reach pose over ``reach_transition_s`` and hold it for ``reach_hold_s``, like
   a deployed arm IK raising the hands to a handle. The pose is a configured
   anchor plus noise, or a uniform sample from ``reach_box``.
+
+  Likewise (``static_probability > 0``), environments enter static scenarios:
+  the arms stop where they are and stay still for ``static_hold_s``, like a
+  deployed arm holding its pose while the robot stands or walks.
   """
 
   cfg: "UpperBodyPoseActionCfg"
@@ -135,11 +139,15 @@ class UpperBodyPoseAction(ActionTerm):
     self._delta = torch.zeros_like(self._default)
     self._interval_steps = max(1, int(round(cfg.interval_s / env.step_dt)))
 
-    # Reach scenarios. _reach_left counts the goal resamplings left in an
-    # env's current scenario (0: random goals).
+    # Reach and static scenarios. _scenario_left counts the goal resamplings
+    # left in an env's current scenario (0: random goals); _in_reach tells a
+    # reach from a static hold.
     self._lower = limits[..., 0]
     self._upper = limits[..., 1]
-    self._reach_left = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+    self._scenario_left = torch.zeros(
+      self.num_envs, device=self.device, dtype=torch.long
+    )
+    self._in_reach = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
     self._reach_transition_steps = max(
       1, int(round(cfg.reach_transition_s / env.step_dt))
     )
@@ -215,7 +223,8 @@ class UpperBodyPoseAction(ActionTerm):
     self._current[env_ids] = self._default[env_ids]
     self._goal[env_ids] = self._default[env_ids]
     self._delta[env_ids] = 0.0
-    self._reach_left[env_ids] = 0
+    self._scenario_left[env_ids] = 0
+    self._in_reach[env_ids] = False
 
   # HOMIE goal sampling and curriculum.
 
@@ -225,18 +234,22 @@ class UpperBodyPoseAction(ActionTerm):
         slice(None) if env_ids is None else env_ids
       ]
     random_ids = env_ids
-    if self.cfg.reach_probability > 0.0:
-      # Envs mid-scenario keep their reach goal; the others may start one,
-      # with a probability that grows with the curriculum ratio.
-      left = self._reach_left[env_ids]
+    if self.cfg.reach_probability > 0.0 or self.cfg.static_probability > 0.0:
+      # Envs mid-scenario keep their goal; the others may start a reach or a
+      # static hold, with probabilities that grow with the curriculum ratio.
+      left = self._scenario_left[env_ids]
       holding = left > 1
-      self._reach_left[env_ids] = torch.clamp(left - 1, min=0)
-      probability = self.cfg.reach_probability * float(
-        self._curriculum_ratio.clamp(0.0, 1.0)
-      )
-      start = ~holding & (torch.rand(len(env_ids), device=self.device) < probability)
-      self._start_reach(env_ids[start])
-      random_ids = env_ids[~holding & ~start]
+      self._scenario_left[env_ids] = torch.clamp(left - 1, min=0)
+      self._in_reach[env_ids] &= holding
+      ratio = float(self._curriculum_ratio.clamp(0.0, 1.0))
+      reach_p = self.cfg.reach_probability * ratio
+      static_p = self.cfg.static_probability * ratio
+      u = torch.rand(len(env_ids), device=self.device)
+      start_reach = ~holding & (u < reach_p)
+      start_static = ~holding & ~start_reach & (u < reach_p + static_p)
+      self._start_reach(env_ids[start_reach])
+      self._start_static(env_ids[start_static])
+      random_ids = env_ids[~holding & ~start_reach & ~start_static]
     if len(random_ids) > 0:
       self._sample_random_goals(random_ids)
 
@@ -265,16 +278,32 @@ class UpperBodyPoseAction(ActionTerm):
     self._delta[env_ids] = (goal - self._current[env_ids]) / float(
       self._reach_transition_steps
     )
-    low, high = self.cfg.reach_hold_s
-    hold_s = low + torch.rand(n, device=self.device) * (high - low)
-    self._reach_left[env_ids] = torch.clamp(
-      torch.round(hold_s / self.cfg.interval_s).long(), min=1
-    )
+    self._scenario_left[env_ids] = self._sample_intervals(n, self.cfg.reach_hold_s)
+    self._in_reach[env_ids] = True
+
+  def _start_static(self, env_ids: torch.Tensor) -> None:
+    """Stop the arms where they are and hold them still."""
+    n = len(env_ids)
+    if n == 0:
+      return
+    self._goal[env_ids] = self._current[env_ids]
+    self._delta[env_ids] = 0.0
+    self._scenario_left[env_ids] = self._sample_intervals(n, self.cfg.static_hold_s)
+
+  def _sample_intervals(self, n: int, duration_s: tuple[float, float]) -> torch.Tensor:
+    low, high = duration_s
+    seconds = low + torch.rand(n, device=self.device) * (high - low)
+    return torch.clamp(torch.round(seconds / self.cfg.interval_s).long(), min=1)
 
   @property
   def in_reach(self) -> torch.Tensor:
     """Per env: whether a reach scenario is active."""
-    return self._reach_left > 0
+    return self._in_reach & (self._scenario_left > 0)
+
+  @property
+  def in_static(self) -> torch.Tensor:
+    """Per env: whether a static hold is active."""
+    return ~self._in_reach & (self._scenario_left > 0)
 
   def _sample_random_goals(self, env_ids: torch.Tensor) -> None:
     defaults = self._default[env_ids]
@@ -334,6 +363,12 @@ class UpperBodyPoseActionCfg(ActionTermCfg):
   reach_box: dict[str, tuple[float, float]] = field(default_factory=dict)
   """Per-joint (low, high) ranges for box-sampled reach poses; unlisted joints
   keep their default."""
+  static_probability: float = 0.0
+  """Per env and goal resampling, the probability (times the curriculum
+  ratio) that an env not in a scenario stops its arms where they are and holds
+  them still. 0 disables static holds."""
+  static_hold_s: tuple[float, float] = (2.0, 6.0)
+  """Duration range of a static hold."""
 
   def build(self, env: ManagerBasedRlEnv) -> UpperBodyPoseAction:
     return UpperBodyPoseAction(self, env)

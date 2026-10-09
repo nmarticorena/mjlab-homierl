@@ -175,8 +175,9 @@ Note: the HIM-PPO algorithm is single-GPU; the upstream `--gpu-ids` multi-GPU
 path is not supported.
 
 HoMIe v3 (`Mjlab-Homie-Unitree-G1-v3`) is v2 made robust for deployment: "hands
-forward" reach scenarios mixed into the random arm goals, a stand-in-place
-drift penalty, and mild indoor terrain (roughness, ~10 deg slopes, 5 cm steps).
+forward" reach scenarios and static holds (arms stop and stay still) mixed into
+the random arm goals, a stand-in-place drift penalty, and mild indoor terrain
+(roughness, ~10 deg slopes, 5 cm steps).
 Its interface is v2's, so it fine-tunes from a v2 checkpoint:
 
 ```bash
