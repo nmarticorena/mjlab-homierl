@@ -81,9 +81,9 @@ register_mjlab_task(
   runner_cls=HomieHimOnPolicyRunner,
 )
 
-# HoMIe v3: v2 made robust for deployment, interface-identical to v2 so it
-# fine-tunes from a v2 checkpoint. Adds "hands forward" reach scenarios mixed
-# into the random arm goals, a stand-in-place drift penalty with a larger
+# HoMIe v3: v2 made robust for deployment, trained from scratch (interface-
+# identical to v2). Adds "hands forward" reach scenarios and static arm holds
+# mixed into the random arm goals, a stand-in-place drift penalty with a larger
 # stand share, and mild indoor terrain with a survival-based curriculum.
 _V3_KWARGS = dict(
   gains="mjlab",
@@ -92,7 +92,6 @@ _V3_KWARGS = dict(
   terrain="indoor",
   reach=True,
   stand_hold=True,
-  upper_initial_ratio=1.0,
 )
 register_mjlab_task(
   task_id="Mjlab-Homie-Unitree-G1-v3",

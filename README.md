@@ -177,13 +177,11 @@ path is not supported.
 HoMIe v3 (`Mjlab-Homie-Unitree-G1-v3`) is v2 made robust for deployment: "hands
 forward" reach scenarios and static holds (arms stop and stay still) mixed into
 the random arm goals, a stand-in-place drift penalty, and mild indoor terrain
-(roughness, ~10 deg slopes, 5 cm steps).
-Its interface is v2's, so it fine-tunes from a v2 checkpoint:
+(roughness, ~10 deg slopes, 2-5 cm steps). Same interface as v2; trained from
+scratch:
 
 ```bash
-uv run train Mjlab-Homie-Unitree-G1-v3 --env.scene.num-envs 4096 \
-  --agent.resume True --wandb-run-path <entity>/<project>/<v2_run_id> \
-  --wandb-checkpoint-name model_7999.pt
+uv run train Mjlab-Homie-Unitree-G1-v3 --env.scene.num-envs 4096
 ```
 
 Play:

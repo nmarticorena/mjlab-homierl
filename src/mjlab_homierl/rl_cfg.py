@@ -99,15 +99,13 @@ def unitree_g1_homie_v2_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
 
 
 def unitree_g1_homie_v3_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
-  """HoMIe v3: fine-tuned from a v2 checkpoint, own experiment folder.
+  """HoMIe v3: the v2 runner (8k iterations, from scratch), own experiment folder.
 
-  Resume from v2 with ``--agent.resume True --wandb-run-path <v2 run>
-  --wandb-checkpoint-name model_7999.pt``; ``max_iterations`` counts on from
-  the loaded iteration.
+  Fine-tuning from v2 on the indoor terrain stalled (run 0hpm6kc8: episodes
+  ~4.6 s vs v2's ~18 s), so v3 trains from scratch.
   """
   cfg = unitree_g1_homie_v2_himppo_runner_cfg()
   cfg.experiment_name = "g1_homie_v3_himppo"
-  cfg.max_iterations = 4_000
   return cfg
 
 

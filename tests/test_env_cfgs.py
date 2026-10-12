@@ -175,7 +175,7 @@ def test_g1_v3_robustness_knobs() -> None:
 
   v2 = load_env_cfg("Mjlab-Homie-Unitree-G1-v2")
   v3 = load_env_cfg("Mjlab-Homie-Unitree-G1-v3")
-  # Interface-identical to v2, so v3 fine-tunes from a v2 checkpoint.
+  # Interface-identical to v2 (same deploy path in g1-deploy).
   assert (
     v3.actions["joint_pos"].actuator_names == v2.actions["joint_pos"].actuator_names
   )
@@ -187,7 +187,7 @@ def test_g1_v3_robustness_knobs() -> None:
   assert upper.reach_probability > 0.0
   assert upper.reach_anchors == G1_REACH_ANCHORS
   assert upper.reach_box == G1_REACH_BOX
-  assert upper.initial_ratio == 1.0
+  assert upper.initial_ratio == 0.0  # Trained from scratch.
   assert upper.static_probability > 0.0
   assert v2.actions["upper_body_pose"].static_probability == 0.0
   assert v2.actions["upper_body_pose"].reach_probability == 0.0
@@ -201,6 +201,12 @@ def test_g1_v3_robustness_knobs() -> None:
   assert v3.scene.terrain.terrain_type == "generator"
   assert v3.curriculum["terrain_levels"].func is mdp.terrain_levels_survival
   assert v2.scene.terrain.terrain_type == "plane"
+  # No thin terrain geometry (it knocked over a standing policy).
+  for name, sub in v3.scene.terrain.terrain_generator.sub_terrains.items():
+    if hasattr(sub, "base_thickness_ratio"):
+      assert sub.base_thickness_ratio >= 10.0, name
+    if hasattr(sub, "step_height_range"):
+      assert sub.step_height_range[0] >= 0.02, name
   # The anchors and box only name arm joints (the policy owns the waist).
   arm = set(upper.joint_names)
   assert set(G1_REACH_BOX) <= arm and all(set(a) <= arm for a in G1_REACH_ANCHORS)

@@ -45,12 +45,23 @@ OBS_SCALES = {"lin_vel": 2.0, "ang_vel": 0.5, "dof_pos": 1.0, "dof_vel": 0.05}
 NOISE_SCALES = {"dof_pos": 0.02, "dof_vel": 2.0, "ang_vel": 0.5, "gravity": 0.05}
 
 
+# Heightfield base thickness relative to its maximum surface height (mjlab
+# default 1.0); see make_indoor_terrain_cfg.
+_HF_BASE_THICKNESS_RATIO = 20.0
+
+
 def make_indoor_terrain_cfg() -> TerrainGeneratorCfg:
   """Mild terrain for a blind HOMIE policy: lab floors, mats, ramps, cables.
 
   Curriculum mode (one column per terrain type, difficulty along the 10
   rows; see ``mdp.terrain_levels_survival``). At the hardest level: +-3 cm
   roughness, ~10 deg slopes (rise/run 0.18) and 5 cm steps.
+
+  Thin geometry is avoided: mjlab sizes a heightfield's solid base to its
+  maximum surface height, so near-flat heightfields (low difficulty) were
+  only millimetres thick and feet sank through them, and steps a few
+  millimetres high behaved the same. Either knocked over a v2 policy standing
+  still; hence the thick base and the 2 cm minimum step.
   """
   return TerrainGeneratorCfg(
     size=(8.0, 8.0),
@@ -65,11 +76,20 @@ def make_indoor_terrain_cfg() -> TerrainGeneratorCfg:
         noise_range=(0.0, 0.03),
         noise_step=0.005,
         scale_with_difficulty=True,
+        base_thickness_ratio=_HF_BASE_THICKNESS_RATIO,
       ),
-      "slope": hf_pyramid_slope(proportion=0.125, slope_range=(0.0, 0.18)),
-      "slope_inv": hf_pyramid_slope_inv(proportion=0.125, slope_range=(0.0, 0.18)),
-      "steps": pyramid_stairs(proportion=0.1, step_height_range=(0.0, 0.05)),
-      "steps_inv": pyramid_stairs_inv(proportion=0.1, step_height_range=(0.0, 0.05)),
+      "slope": hf_pyramid_slope(
+        proportion=0.125,
+        slope_range=(0.0, 0.18),
+        base_thickness_ratio=_HF_BASE_THICKNESS_RATIO,
+      ),
+      "slope_inv": hf_pyramid_slope_inv(
+        proportion=0.125,
+        slope_range=(0.0, 0.18),
+        base_thickness_ratio=_HF_BASE_THICKNESS_RATIO,
+      ),
+      "steps": pyramid_stairs(proportion=0.1, step_height_range=(0.02, 0.05)),
+      "steps_inv": pyramid_stairs_inv(proportion=0.1, step_height_range=(0.02, 0.05)),
     },
     add_lights=True,
   )
