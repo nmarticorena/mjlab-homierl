@@ -11,6 +11,7 @@ from mjlab_homierl.rl_cfg import (
   unitree_g1_homie_v2_himppo_runner_cfg,
   unitree_g1_homie_v3_himppo_runner_cfg,
   unitree_g1_homie_v4_himppo_runner_cfg,
+  unitree_g1_homie_v5_himppo_runner_cfg,
   unitree_h1_homie_himppo_runner_cfg,
 )
 
@@ -112,6 +113,18 @@ register_mjlab_task(
   env_cfg=unitree_g1_homie_env_cfg(**_V4_KWARGS),
   play_env_cfg=unitree_g1_homie_env_cfg(play=True, **_V4_KWARGS),
   rl_cfg=unitree_g1_homie_v4_himppo_runner_cfg(),
+  runner_cls=HomieHimOnPolicyRunner,
+)
+
+# HoMIe v5: v4's command mix with gait-filtered tracking rewards and a doubled
+# single-support reward, trained from scratch (fine-tuning a trained policy on
+# the command mix made it stand still more). Interface-identical to v3.
+_V5_KWARGS = dict(_V3_KWARGS, agile=True, filtered_tracking=True)
+register_mjlab_task(
+  task_id="Mjlab-Homie-Unitree-G1-v5",
+  env_cfg=unitree_g1_homie_env_cfg(**_V5_KWARGS),
+  play_env_cfg=unitree_g1_homie_env_cfg(play=True, **_V5_KWARGS),
+  rl_cfg=unitree_g1_homie_v5_himppo_runner_cfg(),
   runner_cls=HomieHimOnPolicyRunner,
 )
 

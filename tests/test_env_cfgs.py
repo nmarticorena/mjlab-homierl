@@ -242,6 +242,32 @@ def test_g1_v4_agile_knobs() -> None:
     unitree_g1_homie_env_cfg(native=True, agile=True)
 
 
+def test_g1_v5_filtered_tracking() -> None:
+  from mjlab.tasks.registry import load_env_cfg
+
+  import mjlab_homierl  # noqa: F401
+  from mjlab_homierl import mdp
+
+  v3 = load_env_cfg("Mjlab-Homie-Unitree-G1-v3")
+  v5 = load_env_cfg("Mjlab-Homie-Unitree-G1-v5")
+  for group in ("actor", "critic"):
+    assert v5.observations[group].terms.keys() == v3.observations[group].terms.keys()
+  for name, axis in (
+    ("track_lin_vel_x", 0),
+    ("track_lin_vel_y", 1),
+    ("track_ang_vel", 2),
+  ):
+    assert v5.rewards[name].func is mdp.track_twist_filtered
+    assert v5.rewards[name].params["axis"] == axis
+    assert v5.rewards[name].weight == v3.rewards[name].weight
+  assert v5.rewards["track_height"].func is mdp.track_relative_height_filtered
+  assert v5.rewards["no_fly"].weight == 2 * v3.rewards["no_fly"].weight
+  assert v5.commands["twist"].turn_probability > 0.0  # v4's command mix.
+  assert v5.actions["upper_body_pose"].initial_ratio == 0.0  # From scratch.
+  with pytest.raises(ValueError):
+    unitree_g1_homie_env_cfg(native=True, filtered_tracking=True)
+
+
 def test_walk_sampling_turn_lateral_small() -> None:
   from types import SimpleNamespace
 

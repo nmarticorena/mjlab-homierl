@@ -198,6 +198,16 @@ uv run train Mjlab-Homie-Unitree-G1-v4 --env.scene.num-envs 4096 \
   --wandb-checkpoint-name model_<N>.pt
 ```
 
+HoMIe v5 (`Mjlab-Homie-Unitree-G1-v5`) targets turning in place and
+sidestepping. v4's fine-tune made the policy stand still more, so v5 trains
+from scratch (15k iterations) with v4's command mix, tracking rewards scored on
+a 0.3 s EMA of the pelvis velocity / height (the gait's sway no longer counts
+as tracking error), and a doubled single-support reward (`no_fly`):
+
+```bash
+uv run train Mjlab-Homie-Unitree-G1-v5 --env.scene.num-envs 4096
+```
+
 Play:
 
 ```bash

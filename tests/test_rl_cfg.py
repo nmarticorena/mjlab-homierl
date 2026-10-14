@@ -4,6 +4,7 @@ from mjlab_homierl.rl_cfg import (
   unitree_g1_homie_v2_himppo_runner_cfg,
   unitree_g1_homie_v3_himppo_runner_cfg,
   unitree_g1_homie_v4_himppo_runner_cfg,
+  unitree_g1_homie_v5_himppo_runner_cfg,
   unitree_h1_homie_himppo_runner_cfg,
 )
 
@@ -53,3 +54,9 @@ def test_g1_v4_runner_cfg() -> None:
   assert v4.experiment_name == "g1_homie_v4_himppo"
   assert v4.max_iterations == 3_000  # Fine-tune: additional iterations on resume.
   assert v4.actor == v3.actor and v4.critic == v3.critic
+
+
+def test_g1_v5_runner_cfg() -> None:
+  v5 = unitree_g1_homie_v5_himppo_runner_cfg()
+  assert v5.experiment_name == "g1_homie_v5_himppo"
+  assert v5.max_iterations == 15_000

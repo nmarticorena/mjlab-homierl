@@ -120,5 +120,17 @@ def unitree_g1_homie_v4_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
   return cfg
 
 
+def unitree_g1_homie_v5_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
+  """HoMIe v5: the v3 runner, own folder, 15k iterations from scratch.
+
+  v3 from scratch ended its 8k iterations with the upper-body curriculum at
+  only 0.4 (run n5ao91kt).
+  """
+  cfg = unitree_g1_homie_v3_himppo_runner_cfg()
+  cfg.experiment_name = "g1_homie_v5_himppo"
+  cfg.max_iterations = 15_000
+  return cfg
+
+
 def unitree_h1_homie_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
   return homie_himppo_runner_cfg("h1_homie_himppo")

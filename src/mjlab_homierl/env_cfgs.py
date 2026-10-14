@@ -270,6 +270,7 @@ def unitree_g1_homie_env_cfg(
   reach: bool = False,
   stand_hold: bool = False,
   agile: bool = False,
+  filtered_tracking: bool = False,
   upper_initial_ratio: float = 0.0,
 ) -> ManagerBasedRlEnvCfg:
   """Create the Unitree G1 HOMIE task configuration.
@@ -329,6 +330,14 @@ def unitree_g1_homie_env_cfg(
       ~2 s on average. The tracking rewards tighten from std 0.5 to 0.3, so
       standing still against a small command no longer earns most of the
       tracking reward.
+    filtered_tracking: Score twist and height tracking on an EMA (0.3 s) of the
+      measured pelvis velocity / height instead of the per-step value, so the
+      gait's stride-frequency sway is not penalized (it made standing still
+      outscore stepping for small, sideways and turn commands). With the
+      sway gone the linear std tightens to 0.35; yaw stays at 0.5. Also
+      doubles ``no_fly`` (0.75 -> 1.5), which pays for single support under a
+      non-zero command: a trained policy stood still for sideways and turn
+      commands rather than discover stepping in place.
     upper_initial_ratio: Initial upper-body curriculum ratio. The ratio is not
       stored in checkpoints, so a fine-tune from a trained policy starts at
       1.0 instead of re-growing the disturbance from zero.
@@ -344,6 +353,7 @@ def unitree_g1_homie_env_cfg(
     or reach
     or stand_hold
     or agile
+    or filtered_tracking
   ):
     raise ValueError("native=True pins OpenHomie parity; no other variants allowed.")
   if terrain not in ("plane", "indoor"):
@@ -641,6 +651,17 @@ def unitree_g1_homie_env_cfg(
     twist.walk_retarget_time_s = 2.0
     for name in ("track_lin_vel_x", "track_lin_vel_y", "track_ang_vel"):
       cfg.rewards[name].params["std"] = 0.3
+
+  if filtered_tracking:
+    for name, axis, std in (
+      ("track_lin_vel_x", 0, 0.35),
+      ("track_lin_vel_y", 1, 0.35),
+      ("track_ang_vel", 2, 0.5),
+    ):
+      cfg.rewards[name].func = mdp.track_twist_filtered
+      cfg.rewards[name].params = {"command_name": "twist", "std": std, "axis": axis}
+    cfg.rewards["track_height"].func = mdp.track_relative_height_filtered
+    cfg.rewards["no_fly"].weight = 1.5
 
   if terrain == "indoor":
     cfg.scene.terrain = TerrainEntityCfg(

@@ -13,6 +13,7 @@ Conventions:
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import torch
@@ -859,6 +860,80 @@ class stand_position_drift:
       yaw_weight
     ) * torch.clamp(drift_yaw, max=float(max_drift))
     return drift * standing.float()
+
+
+class _FilteredTracking:
+  """Shared EMA state for the gait-filtered tracking terms.
+
+  The per-step pelvis velocity and height sway with the gait, and the
+  instantaneous exp-kernel tracking terms score that sway as error: standing
+  still scored higher than stepping for small, sideways and turn-in-place
+  commands (step tests on v2/v3, 2026-10-14). These terms track an EMA of the
+  measurement (time constant ``tau`` s), which keeps the average but drops the
+  stride-frequency sway. The EMA is re-seeded from the measurement on reset.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self._ema = torch.zeros(env.num_envs, device=env.device)
+    self._fresh = torch.ones(env.num_envs, device=env.device, dtype=torch.bool)
+
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    self._fresh[slice(None) if env_ids is None else env_ids] = True
+
+  def _filter(
+    self, env: ManagerBasedRlEnv, value: torch.Tensor, tau: float
+  ) -> torch.Tensor:
+    alpha = 1.0 - math.exp(-float(env.step_dt) / float(tau))
+    self._ema = torch.where(self._fresh, value, self._ema + alpha * (value - self._ema))
+    self._fresh[:] = False
+    return self._ema
+
+
+class track_twist_filtered(_FilteredTracking):
+  """``exp(-(cmd - ema(v))^2 / std^2)`` for one twist axis (0 vx, 1 vy, 2 wz)."""
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    std: float,
+    command_name: str,
+    axis: int,
+    tau: float = 0.3,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    assert command is not None
+    if axis == 2:
+      measured = asset.data.root_link_ang_vel_b[:, 2]
+    else:
+      measured = asset.data.root_link_lin_vel_b[:, axis]
+    filtered = self._filter(env, measured, tau)
+    return torch.exp(-torch.square(command[:, axis] - filtered) / std**2)
+
+
+class track_relative_height_filtered(_FilteredTracking):
+  """:func:`track_relative_height` on the EMA of the relative height."""
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    scale: float = 4.0,
+    tau: float = 0.3,
+  ) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    assert command is not None
+    foot_z = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]
+    support_z = torch.min(foot_z, dim=1).values
+    actual_height = asset.data.root_link_pos_w[:, 2] - support_z
+    filtered = self._filter(env, actual_height, tau)
+    error = torch.abs(filtered - command[:, 0])
+    env.extras["log"]["Metrics/relative_height_error_mean"] = torch.mean(error)
+    env.extras["log"]["Metrics/relative_height_mean"] = torch.mean(actual_height)
+    return torch.exp(-error * float(scale))
 
 
 ##
