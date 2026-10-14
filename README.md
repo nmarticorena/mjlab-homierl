@@ -184,6 +184,20 @@ scratch:
 uv run train Mjlab-Homie-Unitree-G1-v3 --env.scene.num-envs 4096
 ```
 
+HoMIe v4 (`Mjlab-Homie-Unitree-G1-v4`) is v3 with responsive velocity
+tracking. v2/v3 ignore turn-in-place, sidestep and small (< 0.3 m/s) commands:
+standing still earned most of the lenient tracking reward and the independent
+uniform draws rarely asked for those motions. v4 splits walk draws into turn in
+place, sidestep, small and uniform commands, redraws them mid-interval, and
+tightens the tracking std from 0.5 to 0.3. Same interface; fine-tuned from a v3
+checkpoint (3k additional iterations, arms at full range):
+
+```bash
+uv run train Mjlab-Homie-Unitree-G1-v4 --env.scene.num-envs 4096 \
+  --agent.resume True --wandb-run-path <entity>/<project>/<v3_run_id> \
+  --wandb-checkpoint-name model_<N>.pt
+```
+
 Play:
 
 ```bash

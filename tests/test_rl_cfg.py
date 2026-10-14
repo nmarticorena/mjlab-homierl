@@ -3,6 +3,7 @@ from mjlab_homierl.rl_cfg import (
   unitree_g1_homie_smooth_himppo_runner_cfg,
   unitree_g1_homie_v2_himppo_runner_cfg,
   unitree_g1_homie_v3_himppo_runner_cfg,
+  unitree_g1_homie_v4_himppo_runner_cfg,
   unitree_h1_homie_himppo_runner_cfg,
 )
 
@@ -44,3 +45,11 @@ def test_g1_v3_runner_cfg() -> None:
   # Same network as v2.
   assert v3.actor == v2.actor and v3.critic == v2.critic
   assert v3.upload_model is False
+
+
+def test_g1_v4_runner_cfg() -> None:
+  v3 = unitree_g1_homie_v3_himppo_runner_cfg()
+  v4 = unitree_g1_homie_v4_himppo_runner_cfg()
+  assert v4.experiment_name == "g1_homie_v4_himppo"
+  assert v4.max_iterations == 3_000  # Fine-tune: additional iterations on resume.
+  assert v4.actor == v3.actor and v4.critic == v3.critic

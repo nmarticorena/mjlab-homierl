@@ -101,11 +101,22 @@ def unitree_g1_homie_v2_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
 def unitree_g1_homie_v3_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
   """HoMIe v3: the v2 runner (8k iterations, from scratch), own experiment folder.
 
-  Fine-tuning from v2 on the indoor terrain stalled (run 0hpm6kc8: episodes
-  ~4.6 s vs v2's ~18 s), so v3 trains from scratch.
+  The first fine-tune from v2 (run 0hpm6kc8) stalled on thin terrain geometry;
+  after the terrain fix, fine-tuning from v2 also works (run lo9jzifx).
   """
   cfg = unitree_g1_homie_v2_himppo_runner_cfg()
   cfg.experiment_name = "g1_homie_v3_himppo"
+  return cfg
+
+
+def unitree_g1_homie_v4_himppo_runner_cfg() -> HomieHimOnPolicyRunnerCfg:
+  """HoMIe v4: a 3k-iteration fine-tune from a v3 checkpoint, own folder.
+
+  On resume ``max_iterations`` counts additional iterations.
+  """
+  cfg = unitree_g1_homie_v2_himppo_runner_cfg()
+  cfg.experiment_name = "g1_homie_v4_himppo"
+  cfg.max_iterations = 3_000
   return cfg
 
 

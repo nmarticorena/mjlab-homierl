@@ -269,6 +269,7 @@ def unitree_g1_homie_env_cfg(
   terrain: str = "plane",
   reach: bool = False,
   stand_hold: bool = False,
+  agile: bool = False,
   upper_initial_ratio: float = 0.0,
 ) -> ManagerBasedRlEnvCfg:
   """Create the Unitree G1 HOMIE task configuration.
@@ -322,6 +323,12 @@ def unitree_g1_homie_env_cfg(
     stand_hold: Penalize drifting from where the robot stood when the twist
       command dropped to zero (``mdp.stand_position_drift``), and raise the
       stand share of the command modes from 1/6 to 0.3 (squat 1/3 -> 0.25).
+    agile: Responsive velocity tracking. Walk draws are split into turn in
+      place (20%), sidestep (20%), small commands with a 0.1-0.4 norm (20%)
+      and the plain uniform draw (40%), and are redrawn mid-interval every
+      ~2 s on average. The tracking rewards tighten from std 0.5 to 0.3, so
+      standing still against a small command no longer earns most of the
+      tracking reward.
     upper_initial_ratio: Initial upper-body curriculum ratio. The ratio is not
       stored in checkpoints, so a fine-tune from a trained policy starts at
       1.0 instead of re-growing the disturbance from zero.
@@ -336,6 +343,7 @@ def unitree_g1_homie_env_cfg(
     or terrain != "plane"
     or reach
     or stand_hold
+    or agile
   ):
     raise ValueError("native=True pins OpenHomie parity; no other variants allowed.")
   if terrain not in ("plane", "indoor"):
@@ -625,6 +633,14 @@ def unitree_g1_homie_env_cfg(
       weight=-1.0,
       params={"command_name": "twist"},
     )
+
+  if agile:
+    twist.turn_probability = 0.2
+    twist.lateral_probability = 0.2
+    twist.small_probability = 0.2
+    twist.walk_retarget_time_s = 2.0
+    for name in ("track_lin_vel_x", "track_lin_vel_y", "track_ang_vel"):
+      cfg.rewards[name].params["std"] = 0.3
 
   if terrain == "indoor":
     cfg.scene.terrain = TerrainEntityCfg(

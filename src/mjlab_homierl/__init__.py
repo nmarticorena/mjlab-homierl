@@ -10,6 +10,7 @@ from mjlab_homierl.rl_cfg import (
   unitree_g1_homie_smooth_himppo_runner_cfg,
   unitree_g1_homie_v2_himppo_runner_cfg,
   unitree_g1_homie_v3_himppo_runner_cfg,
+  unitree_g1_homie_v4_himppo_runner_cfg,
   unitree_h1_homie_himppo_runner_cfg,
 )
 
@@ -98,6 +99,19 @@ register_mjlab_task(
   env_cfg=unitree_g1_homie_env_cfg(**_V3_KWARGS),
   play_env_cfg=unitree_g1_homie_env_cfg(play=True, **_V3_KWARGS),
   rl_cfg=unitree_g1_homie_v3_himppo_runner_cfg(),
+  runner_cls=HomieHimOnPolicyRunner,
+)
+
+# HoMIe v4: v3 with responsive velocity tracking (turn in place, sidestep and
+# small commands, mid-interval retargets, tighter tracking rewards). Interface-
+# identical to v2/v3; fine-tuned from a v3 checkpoint, so the arms start at
+# full range.
+_V4_KWARGS = dict(_V3_KWARGS, agile=True, upper_initial_ratio=1.0)
+register_mjlab_task(
+  task_id="Mjlab-Homie-Unitree-G1-v4",
+  env_cfg=unitree_g1_homie_env_cfg(**_V4_KWARGS),
+  play_env_cfg=unitree_g1_homie_env_cfg(play=True, **_V4_KWARGS),
+  rl_cfg=unitree_g1_homie_v4_himppo_runner_cfg(),
   runner_cls=HomieHimOnPolicyRunner,
 )
 

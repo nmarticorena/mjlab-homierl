@@ -216,6 +216,69 @@ def test_g1_v3_robustness_knobs() -> None:
     unitree_g1_homie_env_cfg(native=True, reach=True)
 
 
+def test_g1_v4_agile_knobs() -> None:
+  from mjlab.tasks.registry import load_env_cfg
+
+  import mjlab_homierl  # noqa: F401
+
+  v3 = load_env_cfg("Mjlab-Homie-Unitree-G1-v3")
+  v4 = load_env_cfg("Mjlab-Homie-Unitree-G1-v4")
+  # Interface-identical to v3, so v3 checkpoints fine-tune into v4.
+  assert (
+    v4.actions["joint_pos"].actuator_names == v3.actions["joint_pos"].actuator_names
+  )
+  for group in ("actor", "critic"):
+    assert v4.observations[group].terms.keys() == v3.observations[group].terms.keys()
+  twist = v4.commands["twist"]
+  assert twist.turn_probability + twist.lateral_probability > 0.0
+  assert twist.small_probability > 0.0
+  assert twist.walk_retarget_time_s is not None
+  assert twist.resampling_time_range == v4.commands["height"].resampling_time_range
+  assert v3.commands["twist"].turn_probability == 0.0
+  assert v4.actions["upper_body_pose"].initial_ratio == 1.0  # Fine-tune.
+  for name in ("track_lin_vel_x", "track_lin_vel_y", "track_ang_vel"):
+    assert v4.rewards[name].params["std"] < v3.rewards[name].params["std"]
+  with pytest.raises(ValueError):
+    unitree_g1_homie_env_cfg(native=True, agile=True)
+
+
+def test_walk_sampling_turn_lateral_small() -> None:
+  from types import SimpleNamespace
+
+  import torch
+
+  from mjlab_homierl.mdp.velocity_command import (
+    UniformVelocityCommand,
+    UniformVelocityCommandCfg,
+  )
+
+  cfg = UniformVelocityCommandCfg(
+    entity_name="robot",
+    resampling_time_range=(4.0, 4.0),
+    ranges=UniformVelocityCommandCfg.Ranges(
+      lin_vel_x=(-0.8, 1.2), lin_vel_y=(-0.5, 0.5), ang_vel_z=(-0.8, 0.8)
+    ),
+    turn_probability=0.25,
+    lateral_probability=0.25,
+    small_probability=0.25,
+  )
+  n = 20_000
+  term = SimpleNamespace(cfg=cfg, device="cpu", vel_command_b=torch.zeros(n, 3))
+  torch.manual_seed(0)
+  UniformVelocityCommand._sample_walk(term, torch.arange(n))
+  cmd = term.vel_command_b
+  turn = (cmd[:, 0] == 0) & (cmd[:, 1] == 0)
+  lateral = (cmd[:, 0] == 0) & (cmd[:, 2] == 0)
+  norm = cmd.norm(dim=1)
+  small = ~turn & ~lateral & (norm >= 0.1 - 1e-5) & (norm <= 0.4 + 1e-5)
+  assert abs(turn.float().mean() - 0.25) < 0.02
+  assert abs(lateral.float().mean() - 0.25) < 0.02
+  assert cmd[turn, 2].abs().min() >= 0.1 and cmd[turn, 2].abs().max() <= 0.8
+  assert cmd[lateral, 1].abs().min() >= 0.1 and cmd[lateral, 1].abs().max() <= 0.5
+  # Small draws plus the few uniform draws that land inside the norm band.
+  assert 0.24 <= small.float().mean() < 0.3
+
+
 def test_homie_command_mode_defaults_match_openhomie() -> None:
   twist = unitree_g1_homie_env_cfg().commands["twist"]
   assert math.isclose(twist.squat_probability, 1.0 / 3.0)

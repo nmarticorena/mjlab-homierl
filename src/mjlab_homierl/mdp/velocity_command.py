@@ -8,6 +8,8 @@ exclusive modes (OpenHomie scheme):
 - stand  (p = 1/6): zero twist, standing height target
 
 The squat and stand probabilities are configurable (walk takes the rest).
+Walk draws can be split further into turn-in-place, sidestep and small
+commands, and redrawn mid-interval (``walk_retarget_time_s``).
 
 The twist command samples the mode and exposes it via :attr:`mode`; the height
 command couples to it. Both commands must share the same resampling interval,
@@ -81,13 +83,56 @@ class UniformVelocityCommand(CommandTerm):
     self.vel_command_b[env_ids] = 0.0
     walk_ids = env_ids[is_walk]
     if walk_ids.numel() > 0:
-      r = torch.empty(len(walk_ids), device=self.device)
-      self.vel_command_b[walk_ids, 0] = r.uniform_(*self.cfg.ranges.lin_vel_x)
-      self.vel_command_b[walk_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y)
-      self.vel_command_b[walk_ids, 2] = r.uniform_(*self.cfg.ranges.ang_vel_z)
+      self._sample_walk(walk_ids)
+
+  def _sample_walk(self, env_ids: torch.Tensor) -> None:
+    """Draw a walk-mode twist: uniform, turn in place, sidestep or small."""
+    n = len(env_ids)
+    ranges = self.cfg.ranges
+    cmd = torch.empty(n, 3, device=self.device)
+    cmd[:, 0].uniform_(*ranges.lin_vel_x)
+    cmd[:, 1].uniform_(*ranges.lin_vel_y)
+    cmd[:, 2].uniform_(*ranges.ang_vel_z)
+
+    u = torch.rand(n, device=self.device)
+    p_turn = float(self.cfg.turn_probability)
+    p_lat = p_turn + float(self.cfg.lateral_probability)
+    p_small = p_lat + float(self.cfg.small_probability)
+    lo = float(self.cfg.min_axis_magnitude)
+
+    def axis_only(mask: torch.Tensor, axis: int, hi: float) -> None:
+      k = int(mask.sum())
+      if k == 0:
+        return
+      mag = torch.empty(k, device=self.device).uniform_(lo, hi)
+      sign = torch.where(torch.rand(k, device=self.device) < 0.5, -1.0, 1.0)
+      cmd[mask] = 0.0
+      cmd[mask, axis] = mag * sign
+
+    axis_only(u < p_turn, 2, max(abs(v) for v in ranges.ang_vel_z))
+    axis_only((u >= p_turn) & (u < p_lat), 1, max(abs(v) for v in ranges.lin_vel_y))
+
+    # Small: keep the uniform draw's direction, rescale its norm.
+    small = (u >= p_lat) & (u < p_small)
+    k = int(small.sum())
+    if k > 0:
+      direction = cmd[small] / cmd[small].norm(dim=1, keepdim=True).clamp_min(1e-6)
+      mag = torch.empty(k, 1, device=self.device).uniform_(*self.cfg.small_magnitude)
+      cmd[small] = direction * mag
+
+    self.vel_command_b[env_ids] = cmd
 
   def _update_command(self) -> None:
-    pass
+    # Mid-interval retargets: walk envs redraw their twist without touching
+    # the mode, so the coupled height command stays valid.
+    period = self.cfg.walk_retarget_time_s
+    if period is None:
+      return
+    p = float(self._env.step_dt) / float(period)
+    hit = (self.mode == MODE_WALK) & (torch.rand(self.num_envs, device=self.device) < p)
+    ids = torch.nonzero(hit, as_tuple=False).squeeze(-1)
+    if ids.numel() > 0:
+      self._sample_walk(ids)
 
   # Visualization.
 
@@ -143,6 +188,19 @@ class UniformVelocityCommandCfg(CommandTermCfg):
   stand_probability: float = 1.0 / 6.0
   """Probability of the stand mode (zero twist, standing height). Walk takes
   the remaining probability; squat + stand must not exceed 1."""
+  turn_probability: float = 0.0
+  """Within walk mode: turn in place (vx = vy = 0, |wz| uniform in
+  [min_axis_magnitude, max |ang_vel_z|], random sign)."""
+  lateral_probability: float = 0.0
+  """Within walk mode: sidestep (vx = wz = 0, |vy| as above)."""
+  small_probability: float = 0.0
+  """Within walk mode: a uniform draw rescaled to a (vx, vy, wz) norm in
+  ``small_magnitude``. The remaining walk draws are plain uniform."""
+  small_magnitude: tuple[float, float] = (0.1, 0.4)
+  min_axis_magnitude: float = 0.1
+  walk_retarget_time_s: float | None = None
+  """Mean time between mid-interval twist redraws for walk envs (Poisson);
+  None disables. Adds speed changes without decoupling the height command."""
 
   @dataclass
   class VizCfg:
